@@ -9,6 +9,7 @@ __pycache__/
 .ruff_cache/
 .idea/
 .vscode/
+.cursor/
 data/*
 !data/.gitkeep
 storage/*
