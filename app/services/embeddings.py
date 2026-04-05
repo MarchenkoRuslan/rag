@@ -54,6 +54,9 @@ class OpenAIEmbeddingProvider(EmbeddingProviderBase):
         arr = np.array([d.embedding for d in data], dtype=np.float32)
         return _normalize_batch(arr)
 
+    def close(self) -> None:
+        self._client.close()
+
 
 class LocalEmbeddingProvider(EmbeddingProviderBase):
     def __init__(self, settings: Settings) -> None:

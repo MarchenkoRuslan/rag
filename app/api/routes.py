@@ -53,17 +53,18 @@ def ingest(
             status_code=400,
             detail="Only .txt and .pdf files are supported",
         )
+    max_bytes = settings.max_ingest_bytes
     try:
-        data = file.file.read()
+        data = file.file.read(max_bytes + 1)
     except Exception as e:
         log.exception("ingest_read_error", error=str(e))
         raise HTTPException(status_code=400, detail="Failed to read upload") from e
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
-    if len(data) > settings.max_ingest_bytes:
+    if len(data) > max_bytes:
         raise HTTPException(
             status_code=413,
-            detail=(f"File too large: {len(data)} bytes (max {settings.max_ingest_bytes})"),
+            detail=f"File too large (max {max_bytes} bytes)",
         )
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     data_path = settings.data_dir / safe_name

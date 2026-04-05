@@ -16,6 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.auth import api_key_rejection
 from app.api.rate_limit import limiter
@@ -86,9 +87,15 @@ async def lifespan(application: FastAPI):
         llm_provider=settings.llm_provider.value,
     )
     yield
+    openai_llm = llm_clients.get("openai")
+    if openai_llm is not None and hasattr(openai_llm, "close"):
+        openai_llm.close()
     ollama_c = llm_clients.get("ollama")
     if ollama_c is not None:
         ollama_c.close()
+    emb_close = getattr(embeddings, "close", None)
+    if callable(emb_close):
+        emb_close()
     store.close()
     log.info("app_shutdown")
 
@@ -108,6 +115,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SlowAPIMiddleware)
 
 
 def _request_id(request: Request) -> str:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import httpx
-from ui.streamlit_app import _format_api_error, _req_headers, _safe_float
+from ui.helpers import _format_api_error, _req_headers, _safe_float
 
 
 def _fake_http_status_error(status_code: int, body: str) -> httpx.HTTPStatusError:

@@ -7,7 +7,10 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.requests import Request
 
 from app.api.auth import api_key_rejection
@@ -82,6 +85,21 @@ def _rag_app_bundle(
 
     fastapi_app.include_router(router)
     fastapi_app.include_router(router, prefix="/v1")
+
+    @fastapi_app.exception_handler(RateLimitExceeded)
+    async def _rate_limit_handler(
+        request: Request,
+        exc: RateLimitExceeded,  # pylint: disable=unused-argument
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": "Rate limit exceeded. Please slow down.",
+                "request_id": request.headers.get("x-request-id") or "unknown",
+            },
+        )
+
+    fastapi_app.add_middleware(SlowAPIMiddleware)
     return fastapi_app, store, emb
 
 
@@ -266,6 +284,42 @@ def test_health_exempt_from_api_key(rag_auth):
     client, _, _ = rag_auth
     r = client.get("/health")
     assert r.status_code == 200
+
+
+def test_documents_require_api_key_when_configured(rag_auth):
+    client, _, _ = rag_auth
+    r = client.get("/documents")
+    assert r.status_code == 401
+
+
+def test_wrong_length_api_key_returns_401_not_500(rag_auth):
+    """Mismatched key length must not trip hmac.compare_digest ValueError."""
+    client, _, _ = rag_auth
+    r = client.post(
+        "/ingest",
+        files={"file": ("a.txt", b"hi", "text/plain")},
+        headers={"Authorization": "Bearer x"},
+    )
+    assert r.status_code == 401
+
+
+def test_ingest_rate_limit_returns_429(tmp_path, monkeypatch):
+    app, _, _ = _rag_app_bundle(tmp_path, monkeypatch)
+    try:
+        with TestClient(app) as client:
+            for i in range(10):
+                r = client.post(
+                    "/ingest",
+                    files={"file": (f"rl{i}.txt", b"paragraph one\n\n" * 5, "text/plain")},
+                )
+                assert r.status_code == 200, r.text
+            blocked = client.post(
+                "/ingest",
+                files={"file": ("rl_overflow.txt", b"paragraph one\n\n" * 5, "text/plain")},
+            )
+            assert blocked.status_code == 429
+    finally:
+        get_settings.cache_clear()
 
 
 # --- ingest error branches ---

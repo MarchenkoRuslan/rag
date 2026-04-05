@@ -20,6 +20,8 @@ from app.utils.logging import get_logger
 
 log = get_logger("vector_store")
 
+_DEFAULT_LIST_DOCUMENTS_LIMIT = 10_000
+
 
 @dataclass
 class ChunkRecord:
@@ -46,9 +48,13 @@ class VectorStore:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._init_db()
-        self._verify_meta()
-        self._index = self._load_or_create_index()
+        try:
+            self._init_db()
+            self._verify_meta()
+            self._index = self._load_or_create_index()
+        except Exception:
+            self._conn.close()
+            raise
 
     def _init_db(self) -> None:
         self._conn.executescript(
@@ -361,10 +367,9 @@ class VectorStore:
             GROUP BY filename
             ORDER BY filename
         """
-        params: list[int] = []
-        if limit is not None:
-            query += " LIMIT ? OFFSET ?"
-            params = [limit, offset]
+        eff_limit = limit if limit is not None else _DEFAULT_LIST_DOCUMENTS_LIMIT
+        query += " LIMIT ? OFFSET ?"
+        params: list[int] = [eff_limit, offset]
         with self._lock:
             rows = self._conn.execute(query, params).fetchall()
         return [

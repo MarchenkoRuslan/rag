@@ -70,18 +70,23 @@ def generate_answer(
     user_content = build_user_prompt(question, chunks)
 
     if settings.llm_provider == LLMProvider.OPENAI:
+        owns_client = openai_client is None
         client = openai_client or build_openai_client(settings)
-        resp = client.chat.completions.create(
-            model=settings.llm_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=0.2,
-        )
-        text = (resp.choices[0].message.content or "").strip()
-        log.info("llm_openai_ok", model=settings.llm_model)
-        return text
+        try:
+            resp = client.chat.completions.create(
+                model=settings.llm_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.2,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            log.info("llm_openai_ok", model=settings.llm_model)
+            return text
+        finally:
+            if owns_client and hasattr(client, "close"):
+                client.close()
 
     return _ollama_chat(user_content, settings, ollama_client)
 
@@ -193,7 +198,11 @@ def _ollama_chat_stream(
             for line in resp.iter_lines():
                 if not line:
                     continue
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    log.warning("ollama_stream_bad_json", line_preview=line[:200])
+                    continue
                 msg = data.get("message") or {}
                 token = msg.get("content", "")
                 if token:
