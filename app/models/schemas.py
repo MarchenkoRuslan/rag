@@ -34,6 +34,7 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceItem]
     metrics: QueryMetricsResponse
+    index_empty: bool = False
 
 
 class IngestResponse(BaseModel):

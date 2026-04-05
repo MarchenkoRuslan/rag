@@ -18,6 +18,7 @@ from app.models.schemas import (
 )
 from app.services.generation import generate_answer
 from app.services.ingestion import ingest_bytes
+from app.services.llm_health import probe_llm
 from app.services.retrieval import retrieve_chunks, retrieval_relevance_stats
 from app.utils.logging import get_logger
 from app.utils.metrics import QueryMetrics, SegmentTimer
@@ -53,6 +54,14 @@ async def ingest(
         raise HTTPException(status_code=400, detail="Failed to read upload") from e
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > settings.max_ingest_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"File too large: {len(data)} bytes "
+                f"(max {settings.max_ingest_bytes})"
+            ),
+        )
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     (settings.data_dir / safe_name).write_bytes(data)
     store.delete_by_filename(safe_name)
@@ -81,6 +90,7 @@ async def query(
     store: VectorStoreDep,
     embeddings: EmbeddingsDep,
 ) -> QueryResponse:
+    index_empty = store.count() == 0
     metrics = QueryMetrics()
     with SegmentTimer() as t_all:
         with SegmentTimer() as t_ret:
@@ -137,6 +147,7 @@ async def query(
         metrics=QueryMetricsResponse(
             **metrics.to_dict(),
         ),
+        index_empty=index_empty,
     )
 
 
@@ -182,5 +193,12 @@ async def list_documents(store: VectorStoreDep) -> DocumentListResponse:
 
 
 @router.get("/health")
-async def health(store: VectorStoreDep) -> dict:
-    return {"status": "ok", "vectors": store.count()}
+async def health(store: VectorStoreDep, settings: SettingsDep) -> dict:
+    n = store.count()
+    body: dict = {"status": "ok", "vectors": n, "index_empty": n == 0}
+    if settings.health_check_llm:
+        ok, err = probe_llm(settings)
+        body["llm_ok"] = ok
+        if not ok:
+            body["llm_error"] = err or "unknown"
+    return body

@@ -71,6 +71,25 @@ class Settings(BaseSettings):
         default=120.0, ge=5.0, alias="OPENAI_TIMEOUT_SECONDS"
     )
 
+    max_ingest_bytes: int = Field(
+        default=20_000_000,
+        ge=1,
+        alias="MAX_INGEST_BYTES",
+        description="Maximum upload size for /ingest (bytes)",
+    )
+
+    health_check_llm: bool = Field(
+        default=False,
+        alias="HEALTH_CHECK_LLM",
+        description="When true, /health probes LLM reachability (short timeout)",
+    )
+
+    api_key: str | None = Field(
+        default=None,
+        alias="RAG_API_KEY",
+        description="When set, require Authorization: Bearer or X-API-Key on API routes",
+    )
+
     @model_validator(mode="after")
     def validate_chunk_overlap(self) -> "Settings":
         if self.chunk_overlap >= self.chunk_size:

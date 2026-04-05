@@ -13,6 +13,7 @@ import structlog.contextvars
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import api_key_rejection
 from app.api.routes import router
 from app.config import get_settings
 from app.services.embeddings import build_embedding_provider
@@ -70,6 +71,11 @@ async def request_context_and_access_log(request: Request, call_next):
     rid = request.headers.get("x-request-id") or str(uuid.uuid4())
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(request_id=rid)
+    settings = getattr(request.app.state, "settings", None) or get_settings()
+    reject = api_key_rejection(request, settings)
+    if reject is not None:
+        reject.headers["X-Request-ID"] = rid
+        return reject
     t0 = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - t0) * 1000
@@ -85,6 +91,7 @@ async def request_context_and_access_log(request: Request, call_next):
 
 
 app.include_router(router)
+app.include_router(router, prefix="/v1")
 
 
 @app.get("/")
@@ -93,4 +100,5 @@ async def root() -> dict:
         "service": "rag-knowledge-system",
         "docs": "/docs",
         "health": "/health",
+        "api_v1_prefix": "/v1",
     }

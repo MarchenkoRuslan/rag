@@ -46,6 +46,9 @@ def _isolate_env_for_tests(monkeypatch):
         "CHUNK_OVERLAP",
         "TOP_K",
         "RELEVANCE_THRESHOLD",
+        "MAX_INGEST_BYTES",
+        "HEALTH_CHECK_LLM",
+        "RAG_API_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()

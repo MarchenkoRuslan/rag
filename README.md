@@ -92,9 +92,14 @@ pylint app tests ui/streamlit_app.py
 | GET | `/documents` | List indexed documents |
 | DELETE | `/documents/{filename}` | Remove document from index and `data/` (safe basename only) |
 
+The same methods are available under the `/v1` prefix (for example `POST /v1/query`). Legacy paths without `/v1` remain available.
+
 ## Operations notes
 
-- **Logs**: JSON via `structlog`; each request logs `method`, `path`, `status_code`, `duration_ms`; response includes `X-Request-ID`.
+- **Logs**: JSON via `structlog`; each request logs `method`, `path`, `status_code`, `duration_ms`; response includes `X-Request-ID`. Clients (including Streamlit) may send `X-Request-ID` to correlate with logs.
+- **Optional auth**: set `RAG_API_KEY` to require `X-API-Key` or `Authorization: Bearer` on API routes (`/health` and docs URLs stay open).
+- **Ingest size cap**: `MAX_INGEST_BYTES` (default 20MB); oversize uploads return HTTP 413.
+- **Health LLM probe**: set `HEALTH_CHECK_LLM=true` to include `llm_ok` / `llm_error` in `GET /health` (short outbound check).
 - **CORS**: `CORS_ALLOW_ORIGINS` (`*` or comma-separated origins).
 - **LLM / OpenAI HTTP timeout**: `OPENAI_TIMEOUT_SECONDS` (OpenAI embeddings and chat, and Ollama chat requests).
 - **Index files**: written with `faiss.serialize_index` for Unicode paths on Windows; older `write_index` files are loaded via a temporary ASCII path.
