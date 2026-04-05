@@ -66,6 +66,11 @@ class Settings(BaseSettings):
         alias="CORS_ALLOW_ORIGINS",
         description="Comma-separated origins or * for all",
     )
+    cors_allow_credentials: bool = Field(
+        default=False,
+        alias="CORS_ALLOW_CREDENTIALS",
+        description="Allow credentialed browser requests for configured origins",
+    )
 
     openai_timeout_seconds: float = Field(
         default=120.0, ge=5.0, alias="OPENAI_TIMEOUT_SECONDS"
@@ -88,6 +93,11 @@ class Settings(BaseSettings):
         default=None,
         alias="RAG_API_KEY",
         description="When set, require Authorization: Bearer or X-API-Key on API routes",
+    )
+    api_key_exempt_docs: bool = Field(
+        default=True,
+        alias="API_KEY_EXEMPT_DOCS",
+        description="Keep /docs, /redoc, /openapi.json public when API key is enabled",
     )
 
     embedding_dimension_override: int | None = Field(
@@ -113,6 +123,14 @@ class Settings(BaseSettings):
         if self.llm_provider == LLMProvider.OPENAI:
             if not self.openai_api_key:
                 raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
+        return self
+
+    @model_validator(mode="after")
+    def validate_cors_credentials(self) -> "Settings":
+        if self.cors_allow_credentials and "*" in self.cors_origins_list():
+            raise ValueError(
+                "CORS_ALLOW_ORIGINS cannot contain '*' when CORS_ALLOW_CREDENTIALS=true"
+            )
         return self
 
     @property

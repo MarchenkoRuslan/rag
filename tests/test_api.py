@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.api.auth import api_key_rejection
+from app.api.rate_limit import limiter
 from app.api.routes import router
 from app.config import get_settings
 from app.services.vector_store import VectorStore
@@ -38,8 +39,12 @@ def _rag_app_bundle(
     api_key: str | None = None,
     max_ingest_bytes: int | None = None,
     health_check_llm: bool = False,
+    api_key_exempt_docs: bool | None = None,
 ):
     get_settings.cache_clear()
+    storage = getattr(limiter, "_storage", None)
+    if storage is not None and hasattr(storage, "reset"):
+        storage.reset()
     root = tmp_path / "api"
     monkeypatch.setenv("DATA_DIR", str((root / "data").resolve()))
     monkeypatch.setenv("STORAGE_DIR", str((root / "storage").resolve()))
@@ -51,6 +56,8 @@ def _rag_app_bundle(
         updates["max_ingest_bytes"] = max_ingest_bytes
     if health_check_llm:
         updates["health_check_llm"] = True
+    if api_key_exempt_docs is not None:
+        updates["api_key_exempt_docs"] = api_key_exempt_docs
     if updates:
         test_settings = test_settings.model_copy(update=updates)
     emb = FakeEmbeddings(16)
@@ -62,6 +69,7 @@ def _rag_app_bundle(
             yield
 
     fastapi_app = FastAPI(lifespan=lifespan)
+    fastapi_app.state.limiter = limiter
 
     @fastapi_app.middleware("http")
     async def _optional_api_key(request: Request, call_next):
@@ -192,6 +200,26 @@ def test_reingest_replaces_chunks(rag):
     assert store.count() == chunks2
 
 
+def test_reingest_failure_keeps_existing_chunks(rag):
+    client, store, _emb = rag
+    first = client.post(
+        "/ingest",
+        files={"file": ("same.txt", (b"v1 " * 200), "text/plain")},
+    )
+    assert first.status_code == 200
+    before = store.count()
+
+    with patch("app.api.routes.ingest_bytes", side_effect=RuntimeError("embed failure")):
+        failed = client.post(
+            "/ingest",
+            files={"file": ("same.txt", (b"v2 " * 200), "text/plain")},
+        )
+    assert failed.status_code == 502
+    assert store.count() == before
+    docs = client.get("/documents").json()["documents"]
+    assert any(d["filename"] == "same.txt" for d in docs)
+
+
 def test_ingest_rejects_oversized_payload(tmp_path, monkeypatch):
     app, _, _ = _rag_app_bundle(tmp_path, monkeypatch, max_ingest_bytes=80)
     try:
@@ -309,6 +337,29 @@ def test_query_relevance_threshold_too_high(rag):
     assert r.status_code == 422
 
 
+@patch("app.api.routes.generate_answer_stream", side_effect=RuntimeError("llm down"))
+def test_query_stream_emits_error_event(_mock_stream, rag):
+    client, _, _ = rag
+    ingest = client.post(
+        "/ingest",
+        files={"file": ("s.txt", b"stream test content", "text/plain")},
+    )
+    assert ingest.status_code == 200
+    r = client.post("/query/stream", json={"question": "what?"})
+    assert r.status_code == 200
+    assert '"type": "sources"' in r.text
+    assert '"type": "error"' in r.text
+    assert '"type": "done"' in r.text
+
+
+@patch("app.api.routes.retrieve_chunks", side_effect=RuntimeError("retrieval down"))
+def test_query_stream_retrieval_error_maps_to_502(_mock_ret, rag):
+    client, _, _ = rag
+    r = client.post("/query/stream", json={"question": "what?"})
+    assert r.status_code == 502
+    assert "retrieval failed" in r.json()["detail"].lower()
+
+
 # --- auth: Bearer, wrong key, /v1/health exempt ---
 
 
@@ -336,6 +387,23 @@ def test_v1_health_exempt_from_api_key(rag_auth):
     client, _, _ = rag_auth
     r = client.get("/v1/health")
     assert r.status_code == 200
+
+
+def test_docs_protected_when_api_key_docs_exemption_disabled(tmp_path, monkeypatch):
+    app, _, _ = _rag_app_bundle(
+        tmp_path,
+        monkeypatch,
+        api_key="pytest-secret",
+        api_key_exempt_docs=False,
+    )
+    try:
+        with TestClient(app) as client:
+            denied = client.get("/openapi.json")
+            assert denied.status_code == 401
+            allowed = client.get("/openapi.json", headers={"X-API-Key": "pytest-secret"})
+            assert allowed.status_code == 200
+    finally:
+        get_settings.cache_clear()
 
 
 # --- health: LLM probe failure ---

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import fitz
 import pytest
 
-from app.services.generation import build_user_prompt, generate_answer
+from app.services.generation import build_user_prompt, generate_answer, generate_answer_stream
 from app.services.ingestion import extract_text_from_bytes, ingest_bytes
 from app.services.retrieval import RetrievedChunk, retrieval_relevance_stats
 from app.services.vector_store import VectorStore
@@ -108,6 +108,39 @@ def test_build_user_prompt():
     assert "[1]" in prompt
     assert "[2]" in prompt
     assert "test?" in prompt
+
+
+@patch("app.services.generation.build_openai_client")
+def test_generate_answer_stream_closes_owned_openai_client(mock_builder):
+    settings = default_rag_test_settings()
+    chunk = RetrievedChunk(
+        citation_id=1,
+        faiss_id=0,
+        filename="doc.txt",
+        chunk_index=0,
+        text="context",
+        relevance_score=0.9,
+    )
+
+    class _Delta:
+        def __init__(self, content: str):
+            self.content = content
+
+    class _Choice:
+        def __init__(self, content: str):
+            self.delta = _Delta(content)
+
+    class _Chunk:
+        def __init__(self, content: str):
+            self.choices = [_Choice(content)]
+
+    client = MagicMock()
+    client.chat.completions.create.return_value = [_Chunk("A"), _Chunk("B")]
+    mock_builder.return_value = client
+
+    out = list(generate_answer_stream("q", [chunk], settings))
+    assert out == ["A", "B"]
+    client.close.assert_called_once()
 
 
 def test_retrieval_relevance_stats_empty():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import threading
@@ -75,7 +76,7 @@ class VectorStore:
         ).fetchone()
         return row["value"] if row else None
 
-    def _meta_set(self, key: str, value: str) -> None:
+    def _meta_set(self, key: str, value: str, *, commit: bool = True) -> None:
         self._conn.execute(
             """
             INSERT INTO store_meta(key, value) VALUES(?, ?)
@@ -83,7 +84,8 @@ class VectorStore:
             """,
             (key, value),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
     def _verify_meta(self) -> None:
         dim_s = self._meta_get("embedding_dim")
@@ -104,10 +106,11 @@ class VectorStore:
 
     def _ensure_meta_initialized(self) -> None:
         if self._meta_get("embedding_dim") is None:
-            self._meta_set("embedding_dim", str(self._dim))
+            self._meta_set("embedding_dim", str(self._dim), commit=False)
             self._meta_set(
                 "embedding_provider",
                 str(self._settings.embedding_provider.value),
+                commit=False,
             )
 
     def _empty_idmap_index(self) -> faiss.Index:
@@ -132,7 +135,19 @@ class VectorStore:
 
     def _write_index_blob(self, index: faiss.Index) -> None:
         self._storage_dir.mkdir(parents=True, exist_ok=True)
-        self._index_path.write_bytes(faiss.serialize_index(index))
+        blob = bytes(faiss.serialize_index(index))
+        fd, temp_path = tempfile.mkstemp(
+            prefix="index-", suffix=".faiss", dir=str(self._storage_dir)
+        )
+        try:
+            with os.fdopen(fd, "wb") as tmp:
+                tmp.write(blob)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.replace(temp_path, self._index_path)
+        except Exception:
+            Path(temp_path).unlink(missing_ok=True)
+            raise
 
     def _read_index_from_disk(self) -> faiss.Index:
         raw = self._index_path.read_bytes()
@@ -191,23 +206,33 @@ class VectorStore:
         if vectors.shape[0] != n:
             raise ValueError("vectors and chunk_texts length mismatch")
         with self._lock:
-            ids_np = self._next_faiss_ids(n)
-            if not _is_idmap_index(self._index):
-                raise RuntimeError("FAISS index is not ID-mapped")
-            self._index.add_with_ids(vectors, ids_np)
-            now = datetime.now(timezone.utc).isoformat()
-            for i, text in enumerate(chunk_texts):
-                fid = int(ids_np[i])
-                self._conn.execute(
+            index_before = faiss.serialize_index(self._index)
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                ids_np = self._next_faiss_ids(n)
+                if not _is_idmap_index(self._index):
+                    raise RuntimeError("FAISS index is not ID-mapped")
+                self._index.add_with_ids(vectors, ids_np)
+                now = datetime.now(timezone.utc).isoformat()
+                rows = [
+                    (int(ids_np[i]), filename, i, text, now)
+                    for i, text in enumerate(chunk_texts)
+                ]
+                self._conn.executemany(
                     """
                     INSERT INTO chunks(faiss_id, filename, chunk_index, text, created_at)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (fid, filename, i, text, now),
+                    rows,
                 )
-            self._conn.commit()
-            self._ensure_meta_initialized()
-            self._write_index_blob(self._index)
+                self._ensure_meta_initialized()
+                self._write_index_blob(self._index)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                self._index = faiss.deserialize_index(index_before)
+                self._write_index_blob(self._index)
+                raise
         log.info(
             "chunks_added",
             filename=filename,
@@ -219,21 +244,87 @@ class VectorStore:
     def delete_by_filename(self, filename: str) -> int:
         """Remove all chunks for a file from SQLite and FAISS. Returns rows removed."""
         with self._lock:
+            index_before = faiss.serialize_index(self._index)
             rows = self._conn.execute(
                 "SELECT faiss_id FROM chunks WHERE filename = ?", (filename,)
             ).fetchall()
             if not rows:
                 return 0
             ids = np.array([int(r["faiss_id"]) for r in rows], dtype=np.int64)
-            if _is_idmap_index(self._index):
-                self._index.remove_ids(ids)
-            self._conn.execute(
-                "DELETE FROM chunks WHERE filename = ?", (filename,)
-            )
-            self._conn.commit()
-            self._write_index_blob(self._index)
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                self._conn.execute(
+                    "DELETE FROM chunks WHERE filename = ?", (filename,)
+                )
+                if _is_idmap_index(self._index):
+                    self._index.remove_ids(ids)
+                self._write_index_blob(self._index)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                self._index = faiss.deserialize_index(index_before)
+                self._write_index_blob(self._index)
+                raise
         log.info("chunks_deleted", filename=filename, count=len(ids))
         return len(ids)
+
+    def replace_chunks(
+        self,
+        vectors: np.ndarray,
+        filename: str,
+        chunk_texts: Sequence[str],
+    ) -> int:
+        """Atomically replace all chunks for filename and append new ones."""
+        if vectors.size == 0:
+            return self.delete_by_filename(filename)
+        if vectors.shape[1] != self._dim:
+            raise ValueError(f"Vector dim {vectors.shape[1]} != {self._dim}")
+        n = len(chunk_texts)
+        if vectors.shape[0] != n:
+            raise ValueError("vectors and chunk_texts length mismatch")
+        with self._lock:
+            index_before = faiss.serialize_index(self._index)
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                old = self._conn.execute(
+                    "SELECT faiss_id FROM chunks WHERE filename = ?", (filename,)
+                ).fetchall()
+                old_ids = np.array([int(r["faiss_id"]) for r in old], dtype=np.int64)
+                self._conn.execute("DELETE FROM chunks WHERE filename = ?", (filename,))
+                if len(old_ids) and _is_idmap_index(self._index):
+                    self._index.remove_ids(old_ids)
+
+                ids_np = self._next_faiss_ids(n)
+                if not _is_idmap_index(self._index):
+                    raise RuntimeError("FAISS index is not ID-mapped")
+                self._index.add_with_ids(vectors, ids_np)
+                now = datetime.now(timezone.utc).isoformat()
+                rows = [
+                    (int(ids_np[i]), filename, i, text, now)
+                    for i, text in enumerate(chunk_texts)
+                ]
+                self._conn.executemany(
+                    """
+                    INSERT INTO chunks(faiss_id, filename, chunk_index, text, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+                self._ensure_meta_initialized()
+                self._write_index_blob(self._index)
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                self._index = faiss.deserialize_index(index_before)
+                self._write_index_blob(self._index)
+                raise
+        log.info(
+            "chunks_replaced",
+            filename=filename,
+            count=n,
+            total=self._index.ntotal,
+        )
+        return n
 
     def get_by_faiss_ids(self, ids: list[int]) -> dict[int, ChunkRecord]:
         if not ids:

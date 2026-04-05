@@ -14,11 +14,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.api.auth import api_key_rejection
+from app.api.rate_limit import limiter
 from app.api.routes import router
 from app.config import LLMProvider, get_settings
 from app.services.embeddings import build_embedding_provider
@@ -28,7 +27,13 @@ from app.utils.logging import configure_logging, get_logger
 
 log = get_logger("main")
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+
+def _is_legacy_api_path(path: str) -> bool:
+    if path.startswith("/v1/"):
+        return False
+    if path in {"/health", "/ingest", "/query", "/query/stream", "/documents"}:
+        return True
+    return path.startswith("/documents/")
 
 
 @asynccontextmanager
@@ -58,7 +63,7 @@ async def lifespan(application: FastAPI):
     application.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
+        allow_credentials=settings.cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -144,6 +149,9 @@ async def request_context_and_access_log(request: Request, call_next):
     response = await call_next(request)
     duration_ms = (time.perf_counter() - t0) * 1000
     response.headers["X-Request-ID"] = rid
+    if _is_legacy_api_path(request.url.path):
+        response.headers["Deprecation"] = "true"
+        response.headers["Link"] = f'</v1{request.url.path}>; rel="successor-version"'
     log.info(
         "http_request",
         method=request.method,

@@ -137,18 +137,26 @@ def generate_answer_stream(
     ]
 
     if settings.llm_provider == LLMProvider.OPENAI:
+        owns_client = openai_client is None
         client = openai_client or build_openai_client(settings)
-        stream = client.chat.completions.create(
-            model=settings.llm_model,
-            messages=messages,
-            temperature=0.2,
-            stream=True,
-        )
-        for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta.content:
-                yield delta.content
-        return
+        try:
+            stream = client.chat.completions.create(
+                model=settings.llm_model,
+                messages=messages,
+                temperature=0.2,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    yield delta.content
+            return
+        except Exception as e:
+            log.exception("llm_openai_stream_error", error=str(e))
+            raise
+        finally:
+            if owns_client and hasattr(client, "close"):
+                client.close()
 
     yield from _ollama_chat_stream(user_content, settings, ollama_client)
 

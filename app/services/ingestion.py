@@ -103,7 +103,7 @@ def ingest_bytes(
     if not chunks:
         raise ValueError("No chunks produced from document")
     vectors = embeddings.embed_texts(chunks)
-    added = store.add_chunks(vectors, filename, chunks)
+    added = store.replace_chunks(vectors, filename, chunks)
     log.info(
         "ingest_complete",
         filename=filename,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import httpx
 
-from ui.streamlit_app import _format_api_error, _req_headers
+from ui.streamlit_app import _format_api_error, _req_headers, _safe_float
 
 
 def _fake_http_status_error(
@@ -31,10 +31,27 @@ def test_format_api_error_plain_text_body():
     assert "Bad Gateway" in result
 
 
+def test_format_api_error_validation_list_detail():
+    body = (
+        '{"detail":[{"loc":["body","question"],'
+        '"msg":"String should have at least 1 character"}]}'
+    )
+    exc = _fake_http_status_error(422, body)
+    result = _format_api_error(exc)
+    assert result.startswith("HTTP 422")
+    assert "body.question" in result
+    assert "at least 1 character" in result
+
+
 def test_format_api_error_generic_exception():
     exc = ValueError("something broke")
     result = _format_api_error(exc)
     assert result == "something broke"
+
+
+def test_safe_float_invalid_returns_default():
+    assert _safe_float("not-a-number", 1.5) == 1.5
+    assert _safe_float(None, 2.5) == 2.5
 
 
 def test_req_headers_has_request_id():

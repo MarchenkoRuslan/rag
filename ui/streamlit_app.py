@@ -14,6 +14,7 @@ import streamlit as st
 DEFAULT_API = os.environ.get("RAG_API_URL", "http://127.0.0.1:8000").rstrip("/")
 _DEFAULT_TOP_K = 5
 _DEFAULT_RELEVANCE = 0.25
+_MAX_QUESTION_LENGTH = 4000
 
 
 def _req_headers() -> dict[str, str]:
@@ -32,7 +33,8 @@ def _format_api_error(exc: BaseException) -> str:
             if isinstance(payload, dict) and "detail" in payload:
                 detail = payload["detail"]
                 if isinstance(detail, list):
-                    text = json.dumps(detail)
+                    parts = _format_validation_detail(detail)
+                    text = "; ".join(parts) if parts else json.dumps(detail)
                 else:
                     text = str(detail)
         except (ValueError, json.JSONDecodeError, TypeError):
@@ -41,22 +43,47 @@ def _format_api_error(exc: BaseException) -> str:
     return str(exc)
 
 
+def _format_validation_detail(detail: list[Any]) -> list[str]:
+    parts: list[str] = []
+    for item in detail:
+        if isinstance(item, dict):
+            loc = item.get("loc")
+            msg = item.get("msg")
+            if not msg:
+                continue
+            if isinstance(loc, list):
+                parts.append(f"{'.'.join(str(x) for x in loc)}: {msg}")
+            else:
+                parts.append(str(msg))
+            continue
+        if item:
+            parts.append(str(item))
+    return parts
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _render_sources(items: list[Mapping[str, Any]]) -> None:
     with st.expander("Sources"):
         for s in items:
             st.markdown(
                 f"**[{s.get('citation_id')}]** `{s.get('filename')}` "
                 f"chunk **{s.get('chunk_index')}** "
-                f"(score {float(s.get('relevance_score', 0)):.3f})\n\n"
+                f"(score {_safe_float(s.get('relevance_score', 0)):.3f})\n\n"
                 f"{s.get('text', '')}"
             )
 
 
 def _metrics_caption(metrics_data: Mapping[str, Any]) -> str:
     return (
-        f"Response: **{float(metrics_data.get('response_time_ms', 0)):.1f} ms** | "
-        f"retrieval: **{float(metrics_data.get('retrieval_time_ms', 0)):.1f} ms** | "
-        f"LLM: **{float(metrics_data.get('generation_time_ms', 0)):.1f} ms** | "
+        f"Response: **{_safe_float(metrics_data.get('response_time_ms', 0)):.1f} ms** | "
+        f"retrieval: **{_safe_float(metrics_data.get('retrieval_time_ms', 0)):.1f} ms** | "
+        f"LLM: **{_safe_float(metrics_data.get('generation_time_ms', 0)):.1f} ms** | "
         f"sources: **{metrics_data.get('num_sources_used', 0)}** | "
         f"hint: **{metrics_data.get('retrieval_accuracy_hint')}**"
     )
@@ -65,9 +92,9 @@ def _metrics_caption(metrics_data: Mapping[str, Any]) -> str:
 def _fetch_health_json() -> dict[str, Any] | None:
     try:
         with httpx.Client(timeout=15.0) as client:
-            response = client.get(f"{DEFAULT_API}/health", headers=_req_headers())
-        response.raise_for_status()
-        body = response.json()
+            health_response = client.get(f"{DEFAULT_API}/health", headers=_req_headers())
+        health_response.raise_for_status()
+        body = health_response.json()
         return body if isinstance(body, dict) else None
     except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError):
         return None
@@ -75,8 +102,8 @@ def _fetch_health_json() -> dict[str, Any] | None:
 
 def _handle_chat_turn(
     user_prompt: str,
-    top_k: int,
-    relevance_threshold: float,
+    selected_top_k: int,
+    selected_relevance_threshold: float,
 ) -> None:
     st.session_state.messages.append({"role": "user", "content": user_prompt})
     with st.chat_message("user"):
@@ -85,21 +112,23 @@ def _handle_chat_turn(
         try:
             payload = {
                 "question": user_prompt,
-                "top_k": top_k,
-                "relevance_threshold": relevance_threshold,
+                "top_k": selected_top_k,
+                "relevance_threshold": selected_relevance_threshold,
             }
             with httpx.Client(timeout=300.0) as query_http:
-                qr = query_http.post(
+                query_response = query_http.post(
                     f"{DEFAULT_API}/query",
                     json=payload,
                     headers=_req_headers(),
                 )
-            qr.raise_for_status()
-            body = qr.json()
-            answer = body.get("answer", "")
-            resp_sources = body.get("sources", [])
-            resp_metrics = body.get("metrics", {})
+            query_response.raise_for_status()
+            query_body = query_response.json()
+            answer = query_body.get("answer", "")
+            resp_sources = query_body.get("sources", [])
+            resp_metrics = query_body.get("metrics", {})
             st.markdown(answer)
+            if query_body.get("index_empty"):
+                st.info("The index is empty. Upload a document from the sidebar.")
             if resp_sources:
                 _render_sources(resp_sources)
             st.caption(_metrics_caption(resp_metrics))
@@ -132,7 +161,9 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 health = _fetch_health_json()
-if health and health.get("index_empty"):
+if health is None:
+    st.warning(f"Cannot reach API at {DEFAULT_API}. Check service availability and credentials.")
+elif health.get("index_empty"):
     st.info("The index is empty. Upload a document from the sidebar to enable answers.")
 
 with st.sidebar:
@@ -182,23 +213,30 @@ with st.sidebar:
         st.session_state.pop("docs_cache", None)
     try:
         with httpx.Client(timeout=30.0) as list_http:
-            dr = list_http.get(f"{DEFAULT_API}/documents", headers=_req_headers())
-        dr.raise_for_status()
-        docs = dr.json().get("documents", [])
+            docs_response = list_http.get(f"{DEFAULT_API}/documents", headers=_req_headers())
+        docs_response.raise_for_status()
+        docs_body = docs_response.json()
+        docs = docs_body.get("documents", []) if isinstance(docs_body, dict) else []
+        if not isinstance(docs, list):
+            docs = []
         if not docs:
             st.info("No documents yet")
         else:
             for d in docs:
+                if not isinstance(d, Mapping):
+                    continue
+                filename = str(d.get("filename", "unknown"))
+                chunk_count = int(_safe_float(d.get("chunk_count", 0), 0))
                 c1, c2 = st.columns([4, 1])
                 with c1:
                     st.write(
-                        f"**{d['filename']}** — {d['chunk_count']} chunks"
+                        f"**{filename}** — {chunk_count} chunks"
                     )
                 with c2:
-                    key = f"delete_{d['filename']}"
+                    key = f"delete_{filename}"
                     if st.button("Remove", key=key):
                         try:
-                            enc = quote(d["filename"], safe="")
+                            enc = quote(filename, safe="")
                             with httpx.Client(timeout=60.0) as del_client:
                                 rr = del_client.delete(
                                     f"{DEFAULT_API}/documents/{enc}",
@@ -222,8 +260,15 @@ for m in st.session_state.messages:
 
 prompt = st.chat_input("Ask a question about your documents...")
 if prompt:
+    cleaned = prompt.strip()
+    if not cleaned:
+        st.warning("Question must not be empty.")
+        st.stop()
+    if len(cleaned) > _MAX_QUESTION_LENGTH:
+        st.warning(f"Question is too long (max {_MAX_QUESTION_LENGTH} characters).")
+        st.stop()
     _handle_chat_turn(
-        prompt,
+        cleaned,
         int(top_k),
         float(relevance_threshold),
     )

@@ -146,3 +146,53 @@ def test_persist_and_reload(test_settings):
     docs = store2.list_documents()
     assert docs[0]["filename"] == "p.txt"
     store2.close()
+
+
+def test_add_chunks_rolls_back_on_index_write_failure(test_settings, monkeypatch):
+    emb = FakeEmbeddings(16)
+    store = VectorStore(test_settings.storage_dir, emb.dimension, test_settings)
+    store.add_chunks(emb.embed_texts(["baseline"]), "base.txt", ["baseline"])
+    before = store.count()
+
+    calls = {"n": 0}
+    original = getattr(store, "_write_index_blob")
+
+    def fail_once(index):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("disk write failed")
+        return original(index)
+
+    monkeypatch.setattr(store, "_write_index_blob", fail_once)
+
+    with pytest.raises(RuntimeError, match="disk write failed"):
+        store.add_chunks(emb.embed_texts(["new"]), "new.txt", ["new"])
+
+    assert store.count() == before
+    docs = store.list_documents()
+    assert [d["filename"] for d in docs] == ["base.txt"]
+
+
+def test_delete_rolls_back_on_index_write_failure(test_settings, monkeypatch):
+    emb = FakeEmbeddings(16)
+    store = VectorStore(test_settings.storage_dir, emb.dimension, test_settings)
+    texts = ["one", "two"]
+    store.add_chunks(emb.embed_texts(texts), "d.txt", texts)
+    before = store.count()
+
+    calls = {"n": 0}
+    original = getattr(store, "_write_index_blob")
+
+    def fail_once(index):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("disk write failed")
+        return original(index)
+
+    monkeypatch.setattr(store, "_write_index_blob", fail_once)
+
+    with pytest.raises(RuntimeError, match="disk write failed"):
+        store.delete_by_filename("d.txt")
+
+    assert store.count() == before
+    assert store.document_count() == 1

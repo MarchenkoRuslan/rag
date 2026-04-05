@@ -10,12 +10,14 @@ from starlette.responses import JSONResponse
 from app.config import Settings
 
 
-def path_exempt_from_api_key(path: str) -> bool:
+def path_exempt_from_api_key(path: str, settings: Settings) -> bool:
     if path in ("/", "/health", "/v1/health"):
         return True
-    if path.startswith("/docs") or path.startswith("/redoc"):
-        return True
-    if path == "/openapi.json":
+    if settings.api_key_exempt_docs and (
+        path.startswith("/docs")
+        or path.startswith("/redoc")
+        or path == "/openapi.json"
+    ):
         return True
     return False
 
@@ -28,7 +30,7 @@ def api_key_rejection(
         return None
     if request.method == "OPTIONS":
         return None
-    if path_exempt_from_api_key(request.url.path):
+    if path_exempt_from_api_key(request.url.path, settings):
         return None
     auth = request.headers.get("authorization") or ""
     bearer = ""

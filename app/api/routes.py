@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.api.deps import EmbeddingsDep, LLMClientsDep, SettingsDep, VectorStoreDep
 from app.api.filename import require_safe_filename
+from app.api.rate_limit import limiter
 from app.models.schemas import (
     DeleteDocumentResponse,
     DocumentItem,
@@ -31,7 +32,6 @@ from app.utils.metrics import QueryMetrics, SegmentTimer
 
 log = get_logger("api")
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 _ALLOWED_INGEST_SUFFIXES = frozenset({"txt", "pdf"})
 
@@ -72,14 +72,28 @@ def ingest(
             ),
         )
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    (settings.data_dir / safe_name).write_bytes(data)
-    store.delete_by_filename(safe_name)
+    data_path = settings.data_dir / safe_name
+    tmp_path: Path | None = None
+    with tempfile.NamedTemporaryFile(
+        prefix="upload-",
+        suffix=f".{suffix}" if suffix else ".tmp",
+        dir=str(settings.data_dir),
+        delete=False,
+    ) as tmp:
+        tmp.write(data)
+        tmp.flush()
+        tmp_path = Path(tmp.name)
     try:
         result = ingest_bytes(safe_name, data, store, embeddings, settings)
+        tmp_path.replace(data_path)
     except ValueError as e:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         log.warning("ingest_validation", error=str(e))
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         log.exception("ingest_error", error=str(e))
         raise HTTPException(
             status_code=502,
@@ -180,14 +194,18 @@ def query_stream(
     llm_clients: LLMClientsDep,
 ) -> StreamingResponse:
     """SSE endpoint: streams answer tokens as `data: {token}` events."""
-    chunks = retrieve_chunks(
-        body.question,
-        store,
-        embeddings,
-        settings,
-        top_k=body.top_k,
-        relevance_threshold=body.relevance_threshold,
-    )
+    try:
+        chunks = retrieve_chunks(
+            body.question,
+            store,
+            embeddings,
+            settings,
+            top_k=body.top_k,
+            relevance_threshold=body.relevance_threshold,
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        log.exception("retrieval_stream_error", error=str(e))
+        raise HTTPException(status_code=502, detail="Retrieval failed") from e
     sources = [
         {
             "citation_id": c.citation_id,
@@ -201,16 +219,21 @@ def query_stream(
 
     def _event_stream():
         yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
-        token_gen = generate_answer_stream(
-            body.question,
-            chunks,
-            settings,
-            openai_client=llm_clients.get("openai"),
-            ollama_client=llm_clients.get("ollama"),
-        )
-        for token in token_gen:
-            yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        try:
+            token_gen = generate_answer_stream(
+                body.question,
+                chunks,
+                settings,
+                openai_client=llm_clients.get("openai"),
+                ollama_client=llm_clients.get("ollama"),
+            )
+            for token in token_gen:
+                yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            log.exception("generation_stream_error", error=str(e))
+            yield f"data: {json.dumps({'type': 'error', 'detail': 'LLM generation failed'})}\n\n"
+        finally:
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(
         _event_stream(),
