@@ -1,0 +1,37 @@
+[tool.pylint.main]
+init-hook = """
+import sys
+from pathlib import Path
+_root = Path.cwd()
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+_venv = _root / '.venv'
+if _venv.is_dir():
+    if sys.platform == 'win32':
+        _sp = _venv / 'Lib' / 'site-packages'
+    else:
+        _sp = next(
+            (p for p in (_venv / 'lib').glob('python*/site-packages') if p.is_dir()),
+            None,
+        )
+    if _sp is not None and _sp.is_dir() and str(_sp) not in sys.path:
+        sys.path.insert(0, str(_sp))
+"""
+
+[tool.pylint."MESSAGES CONTROL"]
+disable = [
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "missing-module-docstring",
+    "too-few-public-methods",
+    "duplicate-code",
+]
+
+[tool.pylint.DESIGN]
+max-args = 8
+max-positional-arguments = 8
+max-locals = 24
+max-attributes = 12
+
+[tool.pylint.SIMILARITIES]
+min-similarity-lines = 12

@@ -123,7 +123,7 @@ class VectorStore:
         for i in range(n):
             vecs[i] = flat.reconstruct(int(i))
         ids = np.arange(n, dtype=np.int64)
-        new_index.add_with_ids(vecs, ids)
+        new_index.add_with_ids(vecs, ids)  # pylint: disable=no-value-for-parameter
         log.info("migrated_flat_ip_to_idmap", vectors=n)
         self._write_index_blob(new_index)
         return new_index
@@ -136,7 +136,7 @@ class VectorStore:
         raw = self._index_path.read_bytes()
         try:
             return faiss.deserialize_index(raw)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             with tempfile.NamedTemporaryFile(suffix=".faiss", delete=False) as tmp:
                 tmp.write(raw)
                 tmp_path = tmp.name

@@ -10,67 +10,64 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.routes import router
-from app.config import EmbeddingProvider, LLMProvider, get_settings
+from app.config import get_settings
 from app.services.vector_store import VectorStore
-from tests.conftest import FakeEmbeddings, RagTestSettings
+from tests.conftest import FakeEmbeddings, RagTestSettings, default_rag_test_settings
 
 
 @asynccontextmanager
-async def _test_lifespan(app: FastAPI, test_settings, store, emb):
-    app.state.settings = test_settings
-    app.state.store = store
-    app.state.embeddings = emb
+async def _bind_test_app_state(
+    application: FastAPI,
+    test_settings: RagTestSettings,
+    store: VectorStore,
+    emb: FakeEmbeddings,
+):
+    application.state.settings = test_settings
+    application.state.store = store
+    application.state.embeddings = emb
     yield
 
 
-@pytest.fixture
-def api_client(tmp_path, monkeypatch):
+@pytest.fixture(name="rag")
+def _rag_http_bundle(tmp_path, monkeypatch):
     get_settings.cache_clear()
     root = tmp_path / "api"
     monkeypatch.setenv("DATA_DIR", str((root / "data").resolve()))
     monkeypatch.setenv("STORAGE_DIR", str((root / "storage").resolve()))
-    test_settings = RagTestSettings(
-        openai_api_key="sk-test-key-for-pytest",
-        embedding_provider=EmbeddingProvider.LOCAL,
-        llm_provider=LLMProvider.OPENAI,
-        llm_model="gpt-4o-mini",
-        chunk_size=200,
-        chunk_overlap=20,
-        top_k=5,
-        relevance_threshold=0.0,
-    )
+    test_settings = default_rag_test_settings()
     emb = FakeEmbeddings(16)
     store = VectorStore(test_settings.storage_dir, emb.dimension, test_settings)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        async with _test_lifespan(app, test_settings, store, emb):
+    async def lifespan(application: FastAPI):
+        async with _bind_test_app_state(application, test_settings, store, emb):
             yield
 
-    app = FastAPI(lifespan=lifespan)
-    app.include_router(router)
-    with TestClient(app) as client:
+    fastapi_app = FastAPI(lifespan=lifespan)
+    fastapi_app.include_router(router)
+    with TestClient(fastapi_app) as client:
         yield client, store, emb
     get_settings.cache_clear()
 
 
-def test_health(api_client):
-    client, _, _ = api_client
+def test_health(rag):
+    client, _, _ = rag
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
 
 
-def test_documents_empty(api_client):
-    client, _, _ = api_client
+def test_documents_empty(rag):
+    client, _, _ = rag
     r = client.get("/documents")
     assert r.status_code == 200
     assert r.json()["documents"] == []
 
 
 @patch("app.api.routes.generate_answer", return_value="Answer [1]")
-def test_query_mocked_llm(mock_gen, api_client):
-    client, store, emb = api_client
+def test_query_mocked_llm(mock_gen, rag):
+    client, store, emb = rag
+    assert store.count() == 0 and emb.dimension == 16
     ingest = client.post(
         "/ingest",
         files={"file": ("t.txt", b"hello world rag system", "text/plain")},
@@ -86,8 +83,8 @@ def test_query_mocked_llm(mock_gen, api_client):
     mock_gen.assert_called_once()
 
 
-def test_delete_document(api_client):
-    client, store, emb = api_client
+def test_delete_document(rag):
+    client, store, _emb = rag
     ingest = client.post(
         "/ingest",
         files={"file": ("d.txt", b"chunk one\n\nchunk two content", "text/plain")},
@@ -101,8 +98,8 @@ def test_delete_document(api_client):
     assert client.get("/documents").json()["documents"] == []
 
 
-def test_reingest_replaces_chunks(api_client):
-    client, store, emb = api_client
+def test_reingest_replaces_chunks(rag):
+    client, store, _emb = rag
     r1 = client.post(
         "/ingest",
         files={"file": ("same.txt", (b"v1 " * 300), "text/plain")},

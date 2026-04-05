@@ -60,5 +60,6 @@ HTTP  →  routes  →  services (ingest / retrieve / generate)
 ## Quick checklist before finishing a change
 
 1. `pytest` passes.
-2. No new Cyrillic in code or project English docs.
-3. New settings documented in `.env.example` and `app/config.py`.
+2. `pylint app tests ui/streamlit_app.py` passes (install dev deps: `pip install -r requirements-dev.txt`; `pyproject.toml` configures venv `init-hook` and pragmatic disables).
+3. No new Cyrillic in code or project English docs.
+4. New settings documented in `.env.example` and `app/config.py`.

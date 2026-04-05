@@ -1,5 +1,8 @@
 """Application configuration from environment variables."""
 
+# pylint: disable=no-member
+# (Pydantic v2 settings fields are runtime-populated; pylint infers FieldInfo.)
+
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path

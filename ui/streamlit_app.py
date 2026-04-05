@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Mapping
 from urllib.parse import quote
@@ -12,9 +13,9 @@ import streamlit as st
 DEFAULT_API = os.environ.get("RAG_API_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
-def _render_sources(sources: list[Mapping[str, Any]]) -> None:
+def _render_sources(items: list[Mapping[str, Any]]) -> None:
     with st.expander("Sources"):
-        for s in sources:
+        for s in items:
             st.markdown(
                 f"**[{s.get('citation_id')}]** `{s.get('filename')}` "
                 f"chunk **{s.get('chunk_index')}** "
@@ -23,14 +24,55 @@ def _render_sources(sources: list[Mapping[str, Any]]) -> None:
             )
 
 
-def _metrics_caption(metrics: Mapping[str, Any]) -> str:
+def _metrics_caption(metrics_data: Mapping[str, Any]) -> str:
     return (
-        f"Response: **{float(metrics.get('response_time_ms', 0)):.1f} ms** | "
-        f"retrieval: **{float(metrics.get('retrieval_time_ms', 0)):.1f} ms** | "
-        f"LLM: **{float(metrics.get('generation_time_ms', 0)):.1f} ms** | "
-        f"sources: **{metrics.get('num_sources_used', 0)}** | "
-        f"hint: **{metrics.get('retrieval_accuracy_hint')}**"
+        f"Response: **{float(metrics_data.get('response_time_ms', 0)):.1f} ms** | "
+        f"retrieval: **{float(metrics_data.get('retrieval_time_ms', 0)):.1f} ms** | "
+        f"LLM: **{float(metrics_data.get('generation_time_ms', 0)):.1f} ms** | "
+        f"sources: **{metrics_data.get('num_sources_used', 0)}** | "
+        f"hint: **{metrics_data.get('retrieval_accuracy_hint')}**"
     )
+
+
+def _handle_chat_turn(user_prompt: str) -> None:
+    st.session_state.messages.append({"role": "user", "content": user_prompt})
+    with st.chat_message("user"):
+        st.markdown(user_prompt)
+    with st.chat_message("assistant"):
+        try:
+            with httpx.Client(timeout=300.0) as query_http:
+                qr = query_http.post(
+                    f"{DEFAULT_API}/query",
+                    json={"question": user_prompt},
+                )
+            qr.raise_for_status()
+            body = qr.json()
+            answer = body.get("answer", "")
+            resp_sources = body.get("sources", [])
+            resp_metrics = body.get("metrics", {})
+            st.markdown(answer)
+            if resp_sources:
+                _render_sources(resp_sources)
+            st.caption(_metrics_caption(resp_metrics))
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": answer,
+                    "sources": resp_sources,
+                    "metrics": resp_metrics,
+                }
+            )
+        except (httpx.HTTPError, json.JSONDecodeError, TypeError) as exc:
+            message = f"Request error: {exc}"
+            st.error(message)
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": message,
+                    "sources": [],
+                    "metrics": {},
+                }
+            )
 
 
 st.set_page_config(page_title="RAG Knowledge System", layout="wide")
@@ -47,15 +89,15 @@ with st.sidebar:
     if up is not None and st.button("Ingest into index", type="primary"):
         try:
             files = {"file": (up.name, up.getvalue())}
-            with httpx.Client(timeout=300.0) as client:
-                r = client.post(f"{DEFAULT_API}/ingest", files=files)
+            with httpx.Client(timeout=300.0) as ingest_http:
+                r = ingest_http.post(f"{DEFAULT_API}/ingest", files=files)
             r.raise_for_status()
             data = r.json()
             st.success(
                 f"Done: {data.get('chunks_added', 0)} chunks from "
                 f"{data.get('characters_extracted', 0)} characters"
             )
-        except Exception as e:
+        except (httpx.HTTPError, json.JSONDecodeError, TypeError) as e:
             st.error(f"Ingest error: {e}")
 
     st.divider()
@@ -63,8 +105,8 @@ with st.sidebar:
     if st.button("Refresh list"):
         st.session_state.pop("docs_cache", None)
     try:
-        with httpx.Client(timeout=30.0) as client:
-            dr = client.get(f"{DEFAULT_API}/documents")
+        with httpx.Client(timeout=30.0) as list_http:
+            dr = list_http.get(f"{DEFAULT_API}/documents")
         dr.raise_for_status()
         docs = dr.json().get("documents", [])
         if not docs:
@@ -88,9 +130,9 @@ with st.sidebar:
                             rr.raise_for_status()
                             st.success("Removed")
                             st.rerun()
-                        except Exception as ex:
+                        except httpx.HTTPError as ex:
                             st.error(f"Delete failed: {ex}")
-    except Exception as e:
+    except (httpx.HTTPError, json.JSONDecodeError, TypeError) as e:
         st.warning(f"Could not fetch /documents: {e}")
 
 for m in st.session_state.messages:
@@ -103,41 +145,4 @@ for m in st.session_state.messages:
 
 prompt = st.chat_input("Ask a question about your documents...")
 if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    with st.chat_message("assistant"):
-        try:
-            with httpx.Client(timeout=300.0) as client:
-                qr = client.post(
-                    f"{DEFAULT_API}/query",
-                    json={"question": prompt},
-                )
-            qr.raise_for_status()
-            body = qr.json()
-            answer = body.get("answer", "")
-            sources = body.get("sources", [])
-            metrics = body.get("metrics", {})
-            st.markdown(answer)
-            if sources:
-                _render_sources(sources)
-            st.caption(_metrics_caption(metrics))
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": answer,
-                    "sources": sources,
-                    "metrics": metrics,
-                }
-            )
-        except Exception as e:
-            err = f"Request error: {e}"
-            st.error(err)
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": err,
-                    "sources": [],
-                    "metrics": {},
-                }
-            )
+    _handle_chat_turn(prompt)

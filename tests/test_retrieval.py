@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from app.services.ingestion import ingest_bytes
 from app.services.retrieval import retrieve_chunks

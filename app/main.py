@@ -1,5 +1,8 @@
 """FastAPI application entrypoint."""
 
+# pylint: disable=no-member
+# (Pydantic Settings attributes are real at runtime.)
+
 from __future__ import annotations
 
 import time
@@ -20,7 +23,7 @@ log = get_logger("main")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(application: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -31,9 +34,9 @@ async def lifespan(app: FastAPI):
         embeddings.dimension,
         settings,
     )
-    app.state.settings = settings
-    app.state.embeddings = embeddings
-    app.state.store = store
+    application.state.settings = settings
+    application.state.embeddings = embeddings
+    application.state.store = store
     log.info(
         "app_startup",
         embedding_dim=embeddings.dimension,

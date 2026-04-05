@@ -48,7 +48,7 @@ def retrieve_chunks(
     ids, scores = store.search(qvec[0], k)
     records = store.get_by_faiss_ids(ids)
     results: list[RetrievedChunk] = []
-    for rank, (fid, score) in enumerate(zip(ids, scores)):
+    for fid, score in zip(ids, scores):
         if score < thr:
             continue
         rec = records.get(fid)

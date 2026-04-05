@@ -56,7 +56,7 @@ class OpenAIEmbeddingProvider(EmbeddingProviderBase):
 
 class LocalEmbeddingProvider(EmbeddingProviderBase):
     def __init__(self, settings: Settings) -> None:
-        from sentence_transformers import SentenceTransformer
+        from sentence_transformers import SentenceTransformer  # pylint: disable=import-outside-toplevel
 
         self._settings = settings
         self._model = SentenceTransformer(settings.local_embedding_model)

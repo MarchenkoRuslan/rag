@@ -18,6 +18,20 @@ class RagTestSettings(Settings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
 
+def default_rag_test_settings() -> RagTestSettings:
+    """Shared defaults for API and service tests."""
+    return RagTestSettings(
+        openai_api_key="sk-test-key-for-pytest",
+        embedding_provider=EmbeddingProvider.LOCAL,
+        llm_provider=LLMProvider.OPENAI,
+        llm_model="gpt-4o-mini",
+        chunk_size=200,
+        chunk_overlap=20,
+        top_k=5,
+        relevance_threshold=0.0,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _isolate_env_for_tests(monkeypatch):
     """Pin provider/key; drop path overrides so explicit RagTestSettings paths win."""
@@ -43,16 +57,7 @@ def _isolate_env_for_tests(monkeypatch):
 def test_settings(tmp_path, monkeypatch) -> RagTestSettings:
     monkeypatch.setenv("DATA_DIR", str((tmp_path / "data").resolve()))
     monkeypatch.setenv("STORAGE_DIR", str((tmp_path / "storage").resolve()))
-    return RagTestSettings(
-        openai_api_key="sk-test-key-for-pytest",
-        embedding_provider=EmbeddingProvider.LOCAL,
-        llm_provider=LLMProvider.OPENAI,
-        llm_model="gpt-4o-mini",
-        chunk_size=200,
-        chunk_overlap=20,
-        top_k=5,
-        relevance_threshold=0.0,
-    )
+    return default_rag_test_settings()
 
 
 class FakeEmbeddings(EmbeddingProviderBase):

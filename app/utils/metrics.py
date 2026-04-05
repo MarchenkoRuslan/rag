@@ -24,7 +24,7 @@ class SegmentTimer:
 
 
 @dataclass
-class QueryMetrics:
+class QueryMetrics:  # pylint: disable=too-many-instance-attributes
     """Aggregated metrics for a single /query call."""
 
     response_time_ms: float = 0.0
