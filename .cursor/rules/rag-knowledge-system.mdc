@@ -1,0 +1,11 @@
+---
+description: RAG project conventions, English-only code, deps pattern
+alwaysApply: true
+---
+
+# RAG Knowledge System
+
+- Read **[AGENTS.md](mdc:AGENTS.md)** at the repo root for stack, testing, and language policy.
+- **No Cyrillic** in Python, tests, Streamlit UI, or English project docs.
+- Prefer **`app/api/deps.py`** (`SettingsDep`, `VectorStoreDep`, `EmbeddingsDep`) for route dependencies instead of reading `request.app.state` inside handlers.
+- Keep changes minimal; run **`pytest`** before finishing.
