@@ -1,2 +1,0 @@
--r requirements.txt
-pylint>=3.2.0

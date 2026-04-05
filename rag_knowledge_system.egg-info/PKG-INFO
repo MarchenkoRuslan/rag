@@ -1,3 +1,24 @@
+Metadata-Version: 2.4
+Name: rag-knowledge-system
+Version: 1.0.0
+Summary: RAG stack: FastAPI, FAISS, Streamlit UI, configurable embeddings and LLM.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.109.0
+Requires-Dist: uvicorn[standard]>=0.27.0
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: pydantic-settings>=2.1.0
+Requires-Dist: faiss-cpu>=1.8.0
+Requires-Dist: numpy>=1.26.0
+Requires-Dist: PyMuPDF>=1.24.0
+Requires-Dist: openai>=1.12.0
+Requires-Dist: sentence-transformers>=2.3.0
+Requires-Dist: httpx>=0.26.0
+Requires-Dist: structlog>=24.1.0
+Requires-Dist: streamlit>=1.31.0
+Requires-Dist: pytest>=8.0.0
+Requires-Dist: pylint>=3.2.0
+
 # RAG Knowledge System
 
 Production-oriented RAG stack: FastAPI, FAISS + SQLite, OpenAI or local embeddings (sentence-transformers), OpenAI or Ollama for the LLM, and a minimal Streamlit UI.
@@ -71,12 +92,10 @@ Set `RAG_API_URL` (default `http://127.0.0.1:8000`) to match the API.
 
 ```bash
 pytest
-pylint app tests ui/streamlit_app.py
 ```
 
 ## Layout
 
-- `pyproject.toml` — dependencies, setuptools packaging, pylint settings
 - `app/` — FastAPI app, ingestion / retrieval / generation services, config
 - `data/` — uploaded files
 - `storage/` — FAISS index and SQLite chunk metadata
