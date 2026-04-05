@@ -36,6 +36,7 @@ class OpenAIEmbeddingProvider(EmbeddingProviderBase):
         self._client = OpenAI(
             api_key=settings.openai_api_key,
             timeout=settings.openai_timeout_seconds,
+            max_retries=3,
         )
         self._model = settings.openai_embedding_model
         self._dim = settings.embedding_dimension

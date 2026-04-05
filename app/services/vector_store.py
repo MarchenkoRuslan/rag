@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +43,7 @@ class VectorStore:
         self._db_path = self._storage_dir / "metadata.db"
         self._settings = settings
         self._dim = int(embedding_dim)
+        self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
@@ -160,10 +162,12 @@ class VectorStore:
         raise RuntimeError(f"Unsupported FAISS index type: {type(index)}")
 
     def persist(self) -> None:
-        self._write_index_blob(self._index)
+        with self._lock:
+            self._write_index_blob(self._index)
 
     def count(self) -> int:
-        return int(self._index.ntotal)
+        with self._lock:
+            return int(self._index.ntotal)
 
     def _next_faiss_ids(self, n: int) -> np.ndarray:
         row = self._conn.execute(
@@ -186,23 +190,24 @@ class VectorStore:
         n = len(chunk_texts)
         if vectors.shape[0] != n:
             raise ValueError("vectors and chunk_texts length mismatch")
-        ids_np = self._next_faiss_ids(n)
-        if not _is_idmap_index(self._index):
-            raise RuntimeError("FAISS index is not ID-mapped")
-        self._index.add_with_ids(vectors, ids_np)
-        now = datetime.now(timezone.utc).isoformat()
-        for i, text in enumerate(chunk_texts):
-            fid = int(ids_np[i])
-            self._conn.execute(
-                """
-                INSERT INTO chunks(faiss_id, filename, chunk_index, text, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (fid, filename, i, text, now),
-            )
-        self._conn.commit()
-        self._ensure_meta_initialized()
-        self.persist()
+        with self._lock:
+            ids_np = self._next_faiss_ids(n)
+            if not _is_idmap_index(self._index):
+                raise RuntimeError("FAISS index is not ID-mapped")
+            self._index.add_with_ids(vectors, ids_np)
+            now = datetime.now(timezone.utc).isoformat()
+            for i, text in enumerate(chunk_texts):
+                fid = int(ids_np[i])
+                self._conn.execute(
+                    """
+                    INSERT INTO chunks(faiss_id, filename, chunk_index, text, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (fid, filename, i, text, now),
+                )
+            self._conn.commit()
+            self._ensure_meta_initialized()
+            self._write_index_blob(self._index)
         log.info(
             "chunks_added",
             filename=filename,
@@ -213,17 +218,20 @@ class VectorStore:
 
     def delete_by_filename(self, filename: str) -> int:
         """Remove all chunks for a file from SQLite and FAISS. Returns rows removed."""
-        rows = self._conn.execute(
-            "SELECT faiss_id FROM chunks WHERE filename = ?", (filename,)
-        ).fetchall()
-        if not rows:
-            return 0
-        ids = np.array([int(r["faiss_id"]) for r in rows], dtype=np.int64)
-        if _is_idmap_index(self._index):
-            self._index.remove_ids(ids)
-        self._conn.execute("DELETE FROM chunks WHERE filename = ?", (filename,))
-        self._conn.commit()
-        self.persist()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT faiss_id FROM chunks WHERE filename = ?", (filename,)
+            ).fetchall()
+            if not rows:
+                return 0
+            ids = np.array([int(r["faiss_id"]) for r in rows], dtype=np.int64)
+            if _is_idmap_index(self._index):
+                self._index.remove_ids(ids)
+            self._conn.execute(
+                "DELETE FROM chunks WHERE filename = ?", (filename,)
+            )
+            self._conn.commit()
+            self._write_index_blob(self._index)
         log.info("chunks_deleted", filename=filename, count=len(ids))
         return len(ids)
 
@@ -231,11 +239,12 @@ class VectorStore:
         if not ids:
             return {}
         placeholders = ",".join("?" * len(ids))
-        rows = self._conn.execute(
-            f"SELECT faiss_id, filename, chunk_index, text FROM chunks "
-            f"WHERE faiss_id IN ({placeholders})",
-            ids,
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT faiss_id, filename, chunk_index, text FROM chunks "
+                f"WHERE faiss_id IN ({placeholders})",
+                ids,
+            ).fetchall()
         return {
             int(r["faiss_id"]): ChunkRecord(
                 faiss_id=int(r["faiss_id"]),
@@ -250,27 +259,36 @@ class VectorStore:
         self, query_vector: np.ndarray, top_k: int
     ) -> tuple[list[int], list[float]]:
         """Returns (ids, scores) for inner product (cosine for normalized vectors)."""
-        if self._index.ntotal == 0:
-            return [], []
         q = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
         faiss.normalize_L2(q)
-        k = min(top_k, int(self._index.ntotal))
-        scores, ids = self._index.search(q, k)
+        with self._lock:
+            if self._index.ntotal == 0:
+                return [], []
+            k = min(top_k, int(self._index.ntotal))
+            scores, ids = self._index.search(q, k)
         ids_list = [int(i) for i in ids[0] if i >= 0]
         scores_list = [float(s) for s, i in zip(scores[0], ids[0]) if i >= 0]
         return ids_list, scores_list
 
-    def list_documents(self) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            """
+    def list_documents(
+        self,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
             SELECT filename,
                    COUNT(*) AS chunk_count,
                    MIN(created_at) AS first_upload
             FROM chunks
             GROUP BY filename
             ORDER BY filename
-            """
-        ).fetchall()
+        """
+        params: list[int] = []
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            params = [limit, offset]
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
         return [
             {
                 "filename": r["filename"],
@@ -281,6 +299,13 @@ class VectorStore:
             }
             for r in rows
         ]
+
+    def document_count(self) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(DISTINCT filename) AS n FROM chunks"
+            ).fetchone()
+        return int(row["n"]) if row else 0
 
     def close(self) -> None:
         self._conn.close()

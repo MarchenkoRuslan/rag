@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+.pytest_cache
+.cursor
+storage/*
+data/*
+embeddings/*
+*.faiss
+*.db

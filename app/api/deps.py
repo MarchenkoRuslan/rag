@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Request
 
@@ -23,6 +23,11 @@ def get_embeddings(request: Request) -> EmbeddingProviderBase:
     return request.app.state.embeddings
 
 
+def get_llm_clients(request: Request) -> dict[str, Any]:
+    return getattr(request.app.state, "llm_clients", {})
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 VectorStoreDep = Annotated[VectorStore, Depends(get_vector_store)]
 EmbeddingsDep = Annotated[EmbeddingProviderBase, Depends(get_embeddings)]
+LLMClientsDep = Annotated[dict[str, Any], Depends(get_llm_clients)]

@@ -11,16 +11,24 @@ from contextlib import asynccontextmanager
 
 import structlog.contextvars
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from app.api.auth import api_key_rejection
 from app.api.routes import router
-from app.config import get_settings
+from app.config import LLMProvider, get_settings
 from app.services.embeddings import build_embedding_provider
+from app.services.generation import build_ollama_client, build_openai_client
 from app.services.vector_store import VectorStore
 from app.utils.logging import configure_logging, get_logger
 
 log = get_logger("main")
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 
 @asynccontextmanager
@@ -35,9 +43,26 @@ async def lifespan(application: FastAPI):
         embeddings.dimension,
         settings,
     )
+    llm_clients: dict = {}
+    if settings.llm_provider == LLMProvider.OPENAI:
+        llm_clients["openai"] = build_openai_client(settings)
+    else:
+        llm_clients["ollama"] = build_ollama_client(settings)
+
     application.state.settings = settings
     application.state.embeddings = embeddings
     application.state.store = store
+    application.state.llm_clients = llm_clients
+
+    origins = settings.cors_origins_list()
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     log.info(
         "app_startup",
         embedding_dim=embeddings.dimension,
@@ -45,6 +70,9 @@ async def lifespan(application: FastAPI):
         llm_provider=settings.llm_provider.value,
     )
     yield
+    ollama_c = llm_clients.get("ollama")
+    if ollama_c is not None:
+        ollama_c.close()
     store.close()
     log.info("app_shutdown")
 
@@ -55,15 +83,51 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
 
-_cors_settings = get_settings()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_settings.cors_origins_list(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+def _request_id(request: Request) -> str:
+    return request.headers.get("x-request-id") or "unknown"
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    rid = _request_id(request)
+    log.exception("unhandled_error", path=request.url.path, error=str(exc))
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": rid},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    rid = _request_id(request)
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.errors(),
+            "request_id": rid,
+        },
+    )
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(
+    request: Request, exc: RateLimitExceeded  # pylint: disable=unused-argument
+) -> JSONResponse:
+    rid = _request_id(request)
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Rate limit exceeded. Please slow down.",
+            "request_id": rid,
+        },
+    )
 
 
 @app.middleware("http")

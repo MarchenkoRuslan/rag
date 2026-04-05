@@ -90,6 +90,13 @@ class Settings(BaseSettings):
         description="When set, require Authorization: Bearer or X-API-Key on API routes",
     )
 
+    embedding_dimension_override: int | None = Field(
+        default=None,
+        ge=1,
+        alias="EMBEDDING_DIMENSION",
+        description="Explicit embedding dimension; auto-detected if omitted",
+    )
+
     @model_validator(mode="after")
     def validate_chunk_overlap(self) -> "Settings":
         if self.chunk_overlap >= self.chunk_size:
@@ -110,7 +117,9 @@ class Settings(BaseSettings):
 
     @property
     def embedding_dimension(self) -> int:
-        """Known output dims for configured models (avoid loading ST model at import)."""
+        """Return explicit override or guess from model name."""
+        if self.embedding_dimension_override is not None:
+            return self.embedding_dimension_override
         if self.embedding_provider == EmbeddingProvider.OPENAI:
             if "large" in self.openai_embedding_model.lower():
                 return 3072

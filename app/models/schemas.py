@@ -52,9 +52,25 @@ class DocumentItem(BaseModel):
 
 class DocumentListResponse(BaseModel):
     documents: list[DocumentItem]
+    total: int = 0
+    offset: int = 0
+    limit: int = 50
 
 
 class DeleteDocumentResponse(BaseModel):
     filename: str
     chunks_removed: int
     data_file_removed: bool
+
+
+class HealthResponse(BaseModel):
+    status: str
+    vectors: int
+    index_empty: bool
+    llm_ok: bool | None = None
+    llm_error: str | None = None
+
+
+class ErrorDetail(BaseModel):
+    detail: str
+    request_id: str | None = None

@@ -21,6 +21,11 @@ dependencies = [
     "httpx>=0.26.0",
     "structlog>=24.1.0",
     "streamlit>=1.31.0",
+    "slowapi>=0.1.9",
+]
+
+[project.optional-dependencies]
+dev = [
     "pytest>=8.0.0",
     "pylint>=3.2.0",
 ]

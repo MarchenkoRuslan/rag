@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -33,7 +35,10 @@ def api_key_rejection(
     if auth.lower().startswith("bearer "):
         bearer = auth[7:].strip()
     header_key = request.headers.get("x-api-key") or ""
-    if bearer == key or header_key == key:
+    if (
+        hmac.compare_digest(bearer, key)
+        or hmac.compare_digest(header_key, key)
+    ):
         return None
     return JSONResponse(
         status_code=401,

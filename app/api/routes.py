@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+import json
 
-from app.api.deps import EmbeddingsDep, SettingsDep, VectorStoreDep
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+from app.api.deps import EmbeddingsDep, LLMClientsDep, SettingsDep, VectorStoreDep
 from app.api.filename import require_safe_filename
 from app.models.schemas import (
     DeleteDocumentResponse,
     DocumentItem,
     DocumentListResponse,
+    HealthResponse,
     IngestResponse,
     QueryMetricsResponse,
     QueryRequest,
     QueryResponse,
     SourceItem,
 )
-from app.services.generation import generate_answer
+from app.services.generation import generate_answer, generate_answer_stream
 from app.services.ingestion import ingest_bytes
 from app.services.llm_health import probe_llm
 from app.services.retrieval import retrieve_chunks, retrieval_relevance_stats
@@ -25,12 +31,15 @@ from app.utils.metrics import QueryMetrics, SegmentTimer
 
 log = get_logger("api")
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 _ALLOWED_INGEST_SUFFIXES = frozenset({"txt", "pdf"})
 
 
 @router.post("/ingest", response_model=IngestResponse)
-async def ingest(
+@limiter.limit("10/minute")
+def ingest(
+    request: Request,  # pylint: disable=unused-argument
     settings: SettingsDep,
     store: VectorStoreDep,
     embeddings: EmbeddingsDep,
@@ -48,7 +57,7 @@ async def ingest(
             detail="Only .txt and .pdf files are supported",
         )
     try:
-        data = await file.read()
+        data = file.file.read()
     except Exception as e:
         log.exception("ingest_read_error", error=str(e))
         raise HTTPException(status_code=400, detail="Failed to read upload") from e
@@ -84,11 +93,14 @@ async def ingest(
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query(
+@limiter.limit("30/minute")
+def query(
+    request: Request,  # pylint: disable=unused-argument
     body: QueryRequest,
     settings: SettingsDep,
     store: VectorStoreDep,
     embeddings: EmbeddingsDep,
+    llm_clients: LLMClientsDep,
 ) -> QueryResponse:
     index_empty = store.count() == 0
     metrics = QueryMetrics()
@@ -115,7 +127,13 @@ async def query(
         )
         with SegmentTimer() as t_gen:
             try:
-                answer = generate_answer(body.question, chunks, settings)
+                answer = generate_answer(
+                    body.question,
+                    chunks,
+                    settings,
+                    openai_client=llm_clients.get("openai"),
+                    ollama_client=llm_clients.get("ollama"),
+                )
             except Exception as e:
                 log.exception("generation_error", error=str(e))
                 raise HTTPException(
@@ -151,8 +169,58 @@ async def query(
     )
 
 
+@router.post("/query/stream")
+@limiter.limit("30/minute")
+def query_stream(
+    request: Request,  # pylint: disable=unused-argument
+    body: QueryRequest,
+    settings: SettingsDep,
+    store: VectorStoreDep,
+    embeddings: EmbeddingsDep,
+    llm_clients: LLMClientsDep,
+) -> StreamingResponse:
+    """SSE endpoint: streams answer tokens as `data: {token}` events."""
+    chunks = retrieve_chunks(
+        body.question,
+        store,
+        embeddings,
+        settings,
+        top_k=body.top_k,
+        relevance_threshold=body.relevance_threshold,
+    )
+    sources = [
+        {
+            "citation_id": c.citation_id,
+            "filename": c.filename,
+            "chunk_index": c.chunk_index,
+            "text": c.text,
+            "relevance_score": c.relevance_score,
+        }
+        for c in chunks
+    ]
+
+    def _event_stream():
+        yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
+        token_gen = generate_answer_stream(
+            body.question,
+            chunks,
+            settings,
+            openai_client=llm_clients.get("openai"),
+            ollama_client=llm_clients.get("ollama"),
+        )
+        for token in token_gen:
+            yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.delete("/documents/{filename}", response_model=DeleteDocumentResponse)
-async def delete_document(
+def delete_document(
     filename: str,
     settings: SettingsDep,
     store: VectorStoreDep,
@@ -178,8 +246,13 @@ async def delete_document(
 
 
 @router.get("/documents", response_model=DocumentListResponse)
-async def list_documents(store: VectorStoreDep) -> DocumentListResponse:
-    rows = store.list_documents()
+def list_documents(
+    store: VectorStoreDep,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> DocumentListResponse:
+    rows = store.list_documents(offset=offset, limit=limit)
+    total = store.document_count()
     return DocumentListResponse(
         documents=[
             DocumentItem(
@@ -188,17 +261,20 @@ async def list_documents(store: VectorStoreDep) -> DocumentListResponse:
                 uploaded_at=r["uploaded_at"],
             )
             for r in rows
-        ]
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
     )
 
 
-@router.get("/health")
-async def health(store: VectorStoreDep, settings: SettingsDep) -> dict:
+@router.get("/health", response_model=HealthResponse)
+def health(store: VectorStoreDep, settings: SettingsDep) -> HealthResponse:
     n = store.count()
-    body: dict = {"status": "ok", "vectors": n, "index_empty": n == 0}
+    resp = HealthResponse(status="ok", vectors=n, index_empty=n == 0)
     if settings.health_check_llm:
         ok, err = probe_llm(settings)
-        body["llm_ok"] = ok
+        resp.llm_ok = ok
         if not ok:
-            body["llm_error"] = err or "unknown"
-    return body
+            resp.llm_error = err or "unknown"
+    return resp

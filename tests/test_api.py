@@ -27,6 +27,7 @@ async def _bind_test_app_state(
     application.state.settings = test_settings
     application.state.store = store
     application.state.embeddings = emb
+    application.state.llm_clients = {}
     yield
 
 
@@ -239,3 +240,119 @@ def test_health_exempt_from_api_key(rag_auth):
     client, _, _ = rag_auth
     r = client.get("/health")
     assert r.status_code == 200
+
+
+# --- ingest error branches ---
+
+
+def test_ingest_unsupported_extension(rag):
+    client, _, _ = rag
+    r = client.post(
+        "/ingest",
+        files={"file": ("data.json", b'{"a":1}', "application/json")},
+    )
+    assert r.status_code == 400
+    assert "only .txt and .pdf" in r.json()["detail"].lower()
+
+
+def test_ingest_empty_file(rag):
+    client, _, _ = rag
+    r = client.post(
+        "/ingest",
+        files={"file": ("empty.txt", b"", "text/plain")},
+    )
+    assert r.status_code == 400
+    assert "empty" in r.json()["detail"].lower()
+
+
+def test_ingest_path_traversal(rag):
+    client, _, _ = rag
+    r = client.post(
+        "/ingest",
+        files={"file": ("../etc.txt", b"payload", "text/plain")},
+    )
+    assert r.status_code == 400
+    assert "invalid filename" in r.json()["detail"].lower()
+
+
+# --- DELETE 404 ---
+
+
+def test_delete_nonexistent_document(rag):
+    client, _, _ = rag
+    r = client.delete("/documents/nonexistent.txt")
+    assert r.status_code == 404
+    assert "not found" in r.json()["detail"].lower()
+
+
+# --- query validation (Pydantic 422) ---
+
+
+def test_query_empty_question(rag):
+    client, _, _ = rag
+    r = client.post("/query", json={"question": ""})
+    assert r.status_code == 422
+
+
+def test_query_top_k_zero(rag):
+    client, _, _ = rag
+    r = client.post("/query", json={"question": "ok", "top_k": 0})
+    assert r.status_code == 422
+
+
+def test_query_relevance_threshold_too_high(rag):
+    client, _, _ = rag
+    r = client.post(
+        "/query",
+        json={"question": "ok", "relevance_threshold": 1.5},
+    )
+    assert r.status_code == 422
+
+
+# --- auth: Bearer, wrong key, /v1/health exempt ---
+
+
+def test_auth_bearer_header(rag_auth):
+    client, _, _ = rag_auth
+    r = client.post(
+        "/ingest",
+        files={"file": ("b.txt", b"hi", "text/plain")},
+        headers={"Authorization": "Bearer pytest-secret"},
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_auth_wrong_key_rejected(rag_auth):
+    client, _, _ = rag_auth
+    r = client.post(
+        "/ingest",
+        files={"file": ("b.txt", b"hi", "text/plain")},
+        headers={"X-API-Key": "wrong-key"},
+    )
+    assert r.status_code == 401
+
+
+def test_v1_health_exempt_from_api_key(rag_auth):
+    client, _, _ = rag_auth
+    r = client.get("/v1/health")
+    assert r.status_code == 200
+
+
+# --- health: LLM probe failure ---
+
+
+@patch("app.api.routes.probe_llm", return_value=(False, "timeout"))
+def test_health_llm_probe_failure(mock_probe, tmp_path, monkeypatch):
+    app, _, _ = _rag_app_bundle(
+        tmp_path, monkeypatch, health_check_llm=True
+    )
+    try:
+        with TestClient(app) as client:
+            r = client.get("/health")
+            assert r.status_code == 200
+            data = r.json()
+            assert data["llm_ok"] is False
+            assert data["llm_error"] == "timeout"
+            mock_probe.assert_called_once()
+    finally:
+        get_settings.cache_clear()
