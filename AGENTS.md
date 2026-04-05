@@ -48,6 +48,7 @@ HTTP  →  routes  →  services (ingest / retrieve / generate)
 ## Conventions
 
 - Prefer **small, focused diffs**; match existing style and typing (`from __future__ import annotations` where used).
+- Use **`SegmentTimer`** (`app/utils/metrics.py`) for nested timing in routes instead of ad-hoc `perf_counter` lists.
 - Use **structlog** with event names and structured fields; include `request_id` context when touching HTTP code.
 - **Safe filenames**: use `app/api/filename.py` for uploads and path segments — no `..`, `/`, or `\`.
 - **Secrets**: never commit `.env`; extend `.env.example` when adding settings.
