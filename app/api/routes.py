@@ -26,7 +26,7 @@ from app.models.schemas import (
 from app.services.generation import generate_answer, generate_answer_stream
 from app.services.ingestion import ingest_bytes
 from app.services.llm_health import probe_llm
-from app.services.retrieval import retrieve_chunks, retrieval_relevance_stats
+from app.services.retrieval import retrieval_relevance_stats, retrieve_chunks
 from app.utils.logging import get_logger
 from app.utils.metrics import QueryMetrics, SegmentTimer
 
@@ -47,10 +47,7 @@ def ingest(
 ) -> IngestResponse:
     filename = file.filename or "document.txt"
     safe_name = require_safe_filename(filename)
-    if "." not in safe_name:
-        suffix = ""
-    else:
-        suffix = safe_name.lower().rsplit(".", 1)[-1]
+    suffix = "" if "." not in safe_name else safe_name.lower().rsplit(".", 1)[-1]
     if suffix not in _ALLOWED_INGEST_SUFFIXES:
         raise HTTPException(
             status_code=400,
@@ -66,10 +63,7 @@ def ingest(
     if len(data) > settings.max_ingest_bytes:
         raise HTTPException(
             status_code=413,
-            detail=(
-                f"File too large: {len(data)} bytes "
-                f"(max {settings.max_ingest_bytes})"
-            ),
+            detail=(f"File too large: {len(data)} bytes (max {settings.max_ingest_bytes})"),
         )
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     data_path = settings.data_dir / safe_name
@@ -135,9 +129,7 @@ def query(
         metrics.max_relevance_score = max_s
         k = body.top_k or settings.top_k
         metrics.retrieval_accuracy_hint = (
-            (mean_s or 0.0) * min(1.0, len(chunks) / max(k, 1))
-            if chunks
-            else 0.0
+            (mean_s or 0.0) * min(1.0, len(chunks) / max(k, 1)) if chunks else 0.0
         )
         with SegmentTimer() as t_gen:
             try:
@@ -231,7 +223,8 @@ def query_stream(
                 yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
         except Exception as e:  # pylint: disable=broad-exception-caught
             log.exception("generation_stream_error", error=str(e))
-            yield f"data: {json.dumps({'type': 'error', 'detail': 'LLM generation failed'})}\n\n"
+            err_payload = json.dumps({"type": "error", "detail": "LLM generation failed"})
+            yield f"data: {err_payload}\n\n"
         finally:
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

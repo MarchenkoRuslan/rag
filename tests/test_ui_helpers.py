@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import httpx
-
 from ui.streamlit_app import _format_api_error, _req_headers, _safe_float
 
 
-def _fake_http_status_error(
-    status_code: int, body: str
-) -> httpx.HTTPStatusError:
+def _fake_http_status_error(status_code: int, body: str) -> httpx.HTTPStatusError:
     response = httpx.Response(status_code, text=body)
     request = httpx.Request("POST", "http://test/query")
-    return httpx.HTTPStatusError(
-        f"{status_code}", request=request, response=response
-    )
+    return httpx.HTTPStatusError(f"{status_code}", request=request, response=response)
 
 
 def test_format_api_error_with_detail():
@@ -33,8 +28,7 @@ def test_format_api_error_plain_text_body():
 
 def test_format_api_error_validation_list_detail():
     body = (
-        '{"detail":[{"loc":["body","question"],'
-        '"msg":"String should have at least 1 character"}]}'
+        '{"detail":[{"loc":["body","question"],"msg":"String should have at least 1 character"}]}'
     )
     exc = _fake_http_status_error(422, body)
     result = _format_api_error(exc)

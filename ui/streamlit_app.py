@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -80,12 +81,17 @@ def _render_sources(items: list[Mapping[str, Any]]) -> None:
 
 
 def _metrics_caption(metrics_data: Mapping[str, Any]) -> str:
+    r_ms = _safe_float(metrics_data.get("response_time_ms", 0))
+    ret_ms = _safe_float(metrics_data.get("retrieval_time_ms", 0))
+    gen_ms = _safe_float(metrics_data.get("generation_time_ms", 0))
+    n_src = metrics_data.get("num_sources_used", 0)
+    hint = metrics_data.get("retrieval_accuracy_hint")
     return (
-        f"Response: **{_safe_float(metrics_data.get('response_time_ms', 0)):.1f} ms** | "
-        f"retrieval: **{_safe_float(metrics_data.get('retrieval_time_ms', 0)):.1f} ms** | "
-        f"LLM: **{_safe_float(metrics_data.get('generation_time_ms', 0)):.1f} ms** | "
-        f"sources: **{metrics_data.get('num_sources_used', 0)}** | "
-        f"hint: **{metrics_data.get('retrieval_accuracy_hint')}**"
+        f"Response: **{r_ms:.1f} ms** | "
+        f"retrieval: **{ret_ms:.1f} ms** | "
+        f"LLM: **{gen_ms:.1f} ms** | "
+        f"sources: **{n_src}** | "
+        f"hint: **{hint}**"
     )
 
 
@@ -229,9 +235,7 @@ with st.sidebar:
                 chunk_count = int(_safe_float(d.get("chunk_count", 0), 0))
                 c1, c2 = st.columns([4, 1])
                 with c1:
-                    st.write(
-                        f"**{filename}** — {chunk_count} chunks"
-                    )
+                    st.write(f"**{filename}** — {chunk_count} chunks")
                 with c2:
                     key = f"delete_{filename}"
                     if st.button("Remove", key=key):

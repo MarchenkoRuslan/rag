@@ -3,7 +3,7 @@
 # pylint: disable=no-member
 # (Pydantic v2 settings fields are runtime-populated; pylint infers FieldInfo.)
 
-from enum import Enum
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,12 +11,12 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class EmbeddingProvider(str, Enum):
+class EmbeddingProvider(StrEnum):
     OPENAI = "openai"
     LOCAL = "local"
 
 
-class LLMProvider(str, Enum):
+class LLMProvider(StrEnum):
     OPENAI = "openai"
     OLLAMA = "ollama"
 
@@ -48,16 +48,12 @@ class Settings(BaseSettings):
 
     llm_provider: LLMProvider = Field(default=LLMProvider.OPENAI, alias="LLM_PROVIDER")
     llm_model: str = Field(default="gpt-4o-mini", alias="LLM_MODEL")
-    ollama_base_url: str = Field(
-        default="http://localhost:11434", alias="OLLAMA_BASE_URL"
-    )
+    ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
 
     chunk_size: int = Field(default=500, ge=50, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=50, ge=0, alias="CHUNK_OVERLAP")
     top_k: int = Field(default=5, ge=1, le=50, alias="TOP_K")
-    relevance_threshold: float = Field(
-        default=0.25, ge=0.0, le=1.0, alias="RELEVANCE_THRESHOLD"
-    )
+    relevance_threshold: float = Field(default=0.25, ge=0.0, le=1.0, alias="RELEVANCE_THRESHOLD")
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
@@ -72,9 +68,7 @@ class Settings(BaseSettings):
         description="Allow credentialed browser requests for configured origins",
     )
 
-    openai_timeout_seconds: float = Field(
-        default=120.0, ge=5.0, alias="OPENAI_TIMEOUT_SECONDS"
-    )
+    openai_timeout_seconds: float = Field(default=120.0, ge=5.0, alias="OPENAI_TIMEOUT_SECONDS")
 
     max_ingest_bytes: int = Field(
         default=20_000_000,
@@ -92,7 +86,7 @@ class Settings(BaseSettings):
     api_key: str | None = Field(
         default=None,
         alias="RAG_API_KEY",
-        description="When set, require Authorization: Bearer or X-API-Key on API routes",
+        description=("When set, require Authorization: Bearer or X-API-Key on API routes"),
     )
     api_key_exempt_docs: bool = Field(
         default=True,
@@ -115,14 +109,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_openai_key(self) -> "Settings":
-        if self.embedding_provider == EmbeddingProvider.OPENAI:
-            if not self.openai_api_key:
-                raise ValueError(
-                    "OPENAI_API_KEY is required when EMBEDDING_PROVIDER=openai"
-                )
-        if self.llm_provider == LLMProvider.OPENAI:
-            if not self.openai_api_key:
-                raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
+        if self.embedding_provider == EmbeddingProvider.OPENAI and not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required when EMBEDDING_PROVIDER=openai")
+        if self.llm_provider == LLMProvider.OPENAI and not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER=openai")
         return self
 
     @model_validator(mode="after")

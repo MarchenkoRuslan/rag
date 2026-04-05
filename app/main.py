@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -26,6 +27,25 @@ from app.services.vector_store import VectorStore
 from app.utils.logging import configure_logging, get_logger
 
 log = get_logger("main")
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _cors_from_env() -> tuple[list[str], bool]:
+    raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "*").strip()
+    origins = (
+        ["*"] if raw_origins == "*" else [p.strip() for p in raw_origins.split(",") if p.strip()]
+    )
+    allow_credentials = _env_flag("CORS_ALLOW_CREDENTIALS", default=False)
+    if allow_credentials and "*" in origins:
+        # Mirror Settings validator behavior without full Settings init here.
+        raise RuntimeError("CORS_ALLOW_ORIGINS cannot contain '*' when CORS_ALLOW_CREDENTIALS=true")
+    return origins, allow_credentials
 
 
 def _is_legacy_api_path(path: str) -> bool:
@@ -59,15 +79,6 @@ async def lifespan(application: FastAPI):
     application.state.store = store
     application.state.llm_clients = llm_clients
 
-    origins = settings.cors_origins_list()
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=settings.cors_allow_credentials,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
     log.info(
         "app_startup",
         embedding_dim=embeddings.dimension,
@@ -84,11 +95,19 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(
     title="RAG Knowledge System",
-    description="Production-oriented RAG with FAISS, citations, and configurable LLM/embeddings.",
+    description=("Production-oriented RAG with FAISS, citations, and configurable LLM/embeddings."),
     version="1.0.0",
     lifespan=lifespan,
 )
 app.state.limiter = limiter
+_cors_origins, _cors_allow_credentials = _cors_from_env()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _request_id(request: Request) -> str:
@@ -96,11 +115,13 @@ def _request_id(request: Request) -> str:
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(
-    request: Request, exc: Exception
-) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     rid = _request_id(request)
-    log.exception("unhandled_error", path=request.url.path, error=str(exc))
+    log.exception(
+        "unhandled_error",
+        path=request.url.path,
+        error=str(exc),
+    )
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error", "request_id": rid},
@@ -123,7 +144,8 @@ async def validation_exception_handler(
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(
-    request: Request, exc: RateLimitExceeded  # pylint: disable=unused-argument
+    request: Request,
+    exc: RateLimitExceeded,  # pylint: disable=unused-argument
 ) -> JSONResponse:
     rid = _request_id(request)
     return JSONResponse(
@@ -140,7 +162,12 @@ async def request_context_and_access_log(request: Request, call_next):
     rid = request.headers.get("x-request-id") or str(uuid.uuid4())
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(request_id=rid)
-    settings = getattr(request.app.state, "settings", None) or get_settings()
+    settings = getattr(request.app.state, "settings", None)
+    if settings is None:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Service not ready", "request_id": rid},
+        )
     reject = api_key_rejection(request, settings)
     if reject is not None:
         reject.headers["X-Request-ID"] = rid

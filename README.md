@@ -4,7 +4,7 @@ Production-oriented RAG stack: FastAPI, FAISS + SQLite, OpenAI or local embeddin
 
 ## Requirements
 
-- Python 3.11+ (recommended)
+- Python 3.13+ (recommended baseline)
 
 ## Setup
 
@@ -17,9 +17,12 @@ cd c:\Repos\rag
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
+# Optional: pip install -e ".[local]"   # sentence-transformers for EMBEDDING_PROVIDER=local
+# Optional: pip install -e ".[ui]"      # Streamlit UI
+# Contributors: pip install -e ".[dev]"
 ```
 
-Dependencies are declared in **`pyproject.toml`** (runtime + tests + pylint in one list).
+Runtime dependencies are in **`pyproject.toml`**. Extras: **`local`** (local embeddings), **`ui`** (Streamlit). **`dev`** is for tests and tooling (ruff, mypy, pytest, pytest-cov).
 
 If script execution is blocked by policy, for the current user once:
 
@@ -34,6 +37,8 @@ cd /path/to/rag
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+# Optional: pip install -e ".[local]" ".[ui]"  # as needed
+# Contributors: pip install -e ".[dev]"
 ```
 
 Your prompt should show `(.venv)`.
@@ -59,7 +64,7 @@ Docs: http://127.0.0.1:8000/docs
 
 ## Run the Streamlit UI
 
-In a second terminal, activate `.venv`, then:
+Install the UI extra (`pip install -e ".[ui]"` or `pip install -e ".[dev,ui]"` for contributors). In a second terminal, activate `.venv`, then:
 
 ```bash
 streamlit run ui/streamlit_app.py
@@ -70,14 +75,24 @@ If the API enforces `RAG_API_KEY`, set the same key in the Streamlit process env
 
 ## Tests
 
+Install dev tools: `pip install -e ".[dev]"`.
+
 ```bash
 pytest
-pylint app tests ui/streamlit_app.py
+ruff format --check app tests ui
+ruff check app tests ui
+mypy app
+```
+
+Local `pytest` does not enable coverage by default. CI runs `pytest` with `--cov=app --cov-report=term-missing --cov-fail-under=65` (see `.github/workflows/ci.yml`). To match CI locally:
+
+```bash
+pytest --cov=app --cov-report=term-missing --cov-fail-under=65
 ```
 
 ## Layout
 
-- `pyproject.toml` — dependencies, setuptools packaging, pylint settings
+- `pyproject.toml` — dependencies, extras (`local`, `ui`, `dev`), ruff/mypy/pytest config
 - `app/` — FastAPI app, ingestion / retrieval / generation services, config
 - `data/` — uploaded files
 - `storage/` — FAISS index and SQLite chunk metadata
@@ -111,6 +126,11 @@ The same methods are available under the `/v1` prefix (for example `POST /v1/que
 - **Index files**: written with `faiss.serialize_index` for Unicode paths on Windows; older `write_index` files are loaded via a temporary ASCII path.
 
 See [.env.example](.env.example) for all environment variables.
+
+## Docker Compose
+
+- **`api`** image installs the base package only (OpenAI embeddings by default). To run **`EMBEDDING_PROVIDER=local`** in containers, rebuild with build arg `INSTALL_EXTRAS=local` (or `local,ui` if needed).
+- **`ui`** image is built with `INSTALL_EXTRAS=ui` so Streamlit is included.
 
 ## Agent / AI assistants
 

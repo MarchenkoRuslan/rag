@@ -33,11 +33,7 @@ def retrieve_chunks(
     relevance_threshold: float | None = None,
 ) -> list[RetrievedChunk]:
     k = top_k if top_k is not None else settings.top_k
-    thr = (
-        relevance_threshold
-        if relevance_threshold is not None
-        else settings.relevance_threshold
-    )
+    thr = relevance_threshold if relevance_threshold is not None else settings.relevance_threshold
     if store.count() == 0:
         log.warning("retrieval_empty_index")
         return []
@@ -48,7 +44,7 @@ def retrieve_chunks(
     ids, scores = store.search(qvec[0], k)
     records = store.get_by_faiss_ids(ids)
     results: list[RetrievedChunk] = []
-    for fid, score in zip(ids, scores):
+    for fid, score in zip(ids, scores, strict=True):
         if score < thr:
             continue
         rec = records.get(fid)

@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 import fitz
 import pytest
 
-from app.services.generation import build_user_prompt, generate_answer, generate_answer_stream
+from app.services.generation import (
+    build_user_prompt,
+    generate_answer,
+    generate_answer_stream,
+)
 from app.services.ingestion import extract_text_from_bytes, ingest_bytes
 from app.services.retrieval import RetrievedChunk, retrieval_relevance_stats
 from app.services.vector_store import VectorStore
@@ -53,9 +57,7 @@ def test_generate_answer_empty_chunks():
 @patch("app.services.generation._ollama_chat")
 def test_generate_answer_ollama(mock_chat):
     mock_chat.return_value = "Ollama says: answer [1]"
-    settings = default_rag_test_settings().model_copy(
-        update={"llm_provider": "ollama"}
-    )
+    settings = default_rag_test_settings().model_copy(update={"llm_provider": "ollama"})
     chunk = RetrievedChunk(
         citation_id=1,
         faiss_id=0,
@@ -86,9 +88,7 @@ def test_generate_answer_openai_client_reuse(mock_openai_cls):
         text="text",
         relevance_score=0.8,
     )
-    result = generate_answer(
-        "q?", [chunk], settings, openai_client=mock_client
-    )
+    result = generate_answer("q?", [chunk], settings, openai_client=mock_client)
     assert result == "OpenAI answer"
     mock_openai_cls.assert_not_called()
 
@@ -96,12 +96,20 @@ def test_generate_answer_openai_client_reuse(mock_openai_cls):
 def test_build_user_prompt():
     chunks = [
         RetrievedChunk(
-            citation_id=1, faiss_id=0, filename="f.txt",
-            chunk_index=0, text="first", relevance_score=0.9,
+            citation_id=1,
+            faiss_id=0,
+            filename="f.txt",
+            chunk_index=0,
+            text="first",
+            relevance_score=0.9,
         ),
         RetrievedChunk(
-            citation_id=2, faiss_id=1, filename="g.txt",
-            chunk_index=1, text="second", relevance_score=0.7,
+            citation_id=2,
+            faiss_id=1,
+            filename="g.txt",
+            chunk_index=1,
+            text="second",
+            relevance_score=0.7,
         ),
     ]
     prompt = build_user_prompt("test?", chunks)
@@ -152,12 +160,20 @@ def test_retrieval_relevance_stats_empty():
 def test_retrieval_relevance_stats_values():
     chunks = [
         RetrievedChunk(
-            citation_id=1, faiss_id=0, filename="a.txt",
-            chunk_index=0, text="t", relevance_score=0.6,
+            citation_id=1,
+            faiss_id=0,
+            filename="a.txt",
+            chunk_index=0,
+            text="t",
+            relevance_score=0.6,
         ),
         RetrievedChunk(
-            citation_id=2, faiss_id=1, filename="a.txt",
-            chunk_index=1, text="t", relevance_score=0.8,
+            citation_id=2,
+            faiss_id=1,
+            filename="a.txt",
+            chunk_index=1,
+            text="t",
+            relevance_score=0.8,
         ),
     ]
     mean, mx = retrieval_relevance_stats(chunks)

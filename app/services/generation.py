@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from typing import Any, cast
 
 import httpx
 from openai import OpenAI
@@ -14,11 +15,14 @@ from app.utils.logging import get_logger
 
 log = get_logger("generation")
 
-SYSTEM_PROMPT = """You are a precise assistant for a retrieval-augmented knowledge system.
-Answer ONLY based on the provided context.
-If the answer is not contained in the context, respond exactly with: I don't have enough information to answer this question.
-Use inline citations like [1], [2] that refer to the numbered context blocks.
-Do not invent facts or sources."""
+SYSTEM_PROMPT = (
+    "You are a precise assistant for a retrieval-augmented knowledge system.\n"
+    "Answer ONLY based on the provided context.\n"
+    "If the answer is not contained in the context, respond exactly with: "
+    "I don't have enough information to answer this question.\n"
+    "Use inline citations like [1], [2] that refer to the numbered context blocks.\n"
+    "Do not invent facts or sources."
+)
 
 _MAX_RETRIES = 3
 
@@ -44,9 +48,7 @@ def build_user_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
         "Context:",
     ]
     for c in chunks:
-        lines.append(
-            f"[{c.citation_id}] (source: {c.filename}, chunk {c.chunk_index}): {c.text}"
-        )
+        lines.append(f"[{c.citation_id}] (source: {c.filename}, chunk {c.chunk_index}): {c.text}")
     lines.append("")
     lines.append(f"Question: {question}")
     lines.append("")
@@ -98,11 +100,14 @@ def _ollama_chat(
         ],
         "stream": False,
     }
-    owns_client = client is None
-    if owns_client:
-        client = build_ollama_client(settings)
+    if client is None:
+        http_client = build_ollama_client(settings)
+        close_after = True
+    else:
+        http_client = client
+        close_after = False
     try:
-        r = client.post(url, json=payload)
+        r = http_client.post(url, json=payload)
         r.raise_for_status()
         data = r.json()
         msg = data.get("message") or {}
@@ -113,8 +118,8 @@ def _ollama_chat(
         log.exception("llm_ollama_error", error=str(e))
         raise
     finally:
-        if owns_client:
-            client.close()
+        if close_after:
+            http_client.close()
 
 
 def generate_answer_stream(
@@ -142,11 +147,12 @@ def generate_answer_stream(
         try:
             stream = client.chat.completions.create(
                 model=settings.llm_model,
-                messages=messages,
+                messages=cast(Any, messages),
                 temperature=0.2,
                 stream=True,
             )
-            for chunk in stream:
+            for raw in stream:
+                chunk = cast(Any, raw)
                 delta = chunk.choices[0].delta
                 if delta.content:
                     yield delta.content
@@ -175,11 +181,14 @@ def _ollama_chat_stream(
         ],
         "stream": True,
     }
-    owns_client = client is None
-    if owns_client:
-        client = build_ollama_client(settings)
+    if client is None:
+        http_client = build_ollama_client(settings)
+        close_after = True
+    else:
+        http_client = client
+        close_after = False
     try:
-        with client.stream("POST", url, json=payload) as resp:
+        with http_client.stream("POST", url, json=payload) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():
                 if not line:
@@ -193,5 +202,5 @@ def _ollama_chat_stream(
         log.exception("llm_ollama_stream_error", error=str(e))
         raise
     finally:
-        if owns_client:
-            client.close()
+        if close_after:
+            http_client.close()

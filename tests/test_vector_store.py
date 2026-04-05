@@ -155,7 +155,7 @@ def test_add_chunks_rolls_back_on_index_write_failure(test_settings, monkeypatch
     before = store.count()
 
     calls = {"n": 0}
-    original = getattr(store, "_write_index_blob")
+    original = store._write_index_blob  # pylint: disable=protected-access
 
     def fail_once(index):
         calls["n"] += 1
@@ -163,7 +163,7 @@ def test_add_chunks_rolls_back_on_index_write_failure(test_settings, monkeypatch
             raise RuntimeError("disk write failed")
         return original(index)
 
-    monkeypatch.setattr(store, "_write_index_blob", fail_once)
+    monkeypatch.setattr(store, "_write_index_blob", fail_once)  # pylint: disable=protected-access
 
     with pytest.raises(RuntimeError, match="disk write failed"):
         store.add_chunks(emb.embed_texts(["new"]), "new.txt", ["new"])
@@ -181,7 +181,7 @@ def test_delete_rolls_back_on_index_write_failure(test_settings, monkeypatch):
     before = store.count()
 
     calls = {"n": 0}
-    original = getattr(store, "_write_index_blob")
+    original = store._write_index_blob  # pylint: disable=protected-access
 
     def fail_once(index):
         calls["n"] += 1
@@ -189,7 +189,7 @@ def test_delete_rolls_back_on_index_write_failure(test_settings, monkeypatch):
             raise RuntimeError("disk write failed")
         return original(index)
 
-    monkeypatch.setattr(store, "_write_index_blob", fail_once)
+    monkeypatch.setattr(store, "_write_index_blob", fail_once)  # pylint: disable=protected-access
 
     with pytest.raises(RuntimeError, match="disk write failed"):
         store.delete_by_filename("d.txt")

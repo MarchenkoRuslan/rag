@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 from openai import OpenAI
@@ -57,11 +57,16 @@ class OpenAIEmbeddingProvider(EmbeddingProviderBase):
 
 class LocalEmbeddingProvider(EmbeddingProviderBase):
     def __init__(self, settings: Settings) -> None:
-        from sentence_transformers import SentenceTransformer  # pylint: disable=import-outside-toplevel
+        # Heavy optional dependency: import only when local embeddings are used.
+        # pylint: disable-next=import-outside-toplevel
+        from sentence_transformers import SentenceTransformer
 
         self._settings = settings
         self._model = SentenceTransformer(settings.local_embedding_model)
-        self._dim = int(self._model.get_sentence_embedding_dimension())
+        raw_dim = self._model.get_sentence_embedding_dimension()
+        if raw_dim is None:
+            raise RuntimeError("Embedding model did not report output dimension")
+        self._dim = int(raw_dim)
 
     @property
     def dimension(self) -> int:

@@ -49,9 +49,7 @@ class QueryMetrics:  # pylint: disable=too-many-instance-attributes
                 else None
             ),
             "max_relevance_score": (
-                round(self.max_relevance_score, 4)
-                if self.max_relevance_score is not None
-                else None
+                round(self.max_relevance_score, 4) if self.max_relevance_score is not None else None
             ),
             "retrieval_accuracy_hint": (
                 round(self.retrieval_accuracy_hint, 4)

@@ -7,7 +7,7 @@ name = "rag-knowledge-system"
 version = "1.0.0"
 description = "RAG stack: FastAPI, FAISS, Streamlit UI, configurable embeddings and LLM."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
@@ -17,57 +17,77 @@ dependencies = [
     "numpy>=1.26.0",
     "PyMuPDF>=1.24.0",
     "openai>=1.12.0",
-    "sentence-transformers>=2.3.0",
     "httpx>=0.26.0",
     "structlog>=24.1.0",
-    "streamlit>=1.31.0",
     "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
+# Local embedding models (sentence-transformers / torch stack)
+local = ["sentence-transformers>=2.3.0"]
+# Streamlit UI client
+ui = ["streamlit>=1.31.0"]
 dev = [
     "pytest>=8.0.0",
-    "pylint>=3.2.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    "ignore:builtin type SwigPyPacked:DeprecationWarning",
+    "ignore:builtin type SwigPyObject:DeprecationWarning",
+    "ignore:builtin type swigvarlink:DeprecationWarning",
+    "ignore:.*asyncio\\.iscoroutinefunction.*:DeprecationWarning",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["app", "tests", "ui"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["B008"]  # Depends() in FastAPI defaults is intentional
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B017"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.13"
+warn_unused_configs = true
+explicit_package_bases = true
+mypy_path = "."
+plugins = ["pydantic.mypy"]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "faiss.*",
+    "fitz",
+    "sentence_transformers.*",
+]
+ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
-
-[tool.pylint.main]
-init-hook = """
-import sys
-from pathlib import Path
-_root = Path.cwd()
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
-_venv = _root / '.venv'
-if _venv.is_dir():
-    if sys.platform == 'win32':
-        _sp = _venv / 'Lib' / 'site-packages'
-    else:
-        _sp = next(
-            (p for p in (_venv / 'lib').glob('python*/site-packages') if p.is_dir()),
-            None,
-        )
-    if _sp is not None and _sp.is_dir() and str(_sp) not in sys.path:
-        sys.path.insert(0, str(_sp))
-"""
-
-[tool.pylint."MESSAGES CONTROL"]
-disable = [
-    "missing-class-docstring",
-    "missing-function-docstring",
-    "missing-module-docstring",
-    "too-few-public-methods",
-    "duplicate-code",
-]
-
-[tool.pylint.DESIGN]
-max-args = 8
-max-positional-arguments = 8
-max-locals = 24
-max-attributes = 12
-
-[tool.pylint.SIMILARITIES]
-min-similarity-lines = 12

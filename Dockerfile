@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS base
+FROM python:3.13-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -11,17 +11,23 @@ RUN apt-get update && \
 
 COPY pyproject.toml README.md ./
 COPY app/ app/
+COPY ui/ ui/
 
-RUN pip install --no-cache-dir .
+ARG INSTALL_EXTRAS=
+RUN if [ -z "$INSTALL_EXTRAS" ]; then \
+      pip install --no-cache-dir .; \
+    else \
+      pip install --no-cache-dir ".[$INSTALL_EXTRAS]"; \
+    fi
 
-FROM python:3.11-slim AS runtime
+FROM python:3.13-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=base /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=base /usr/local/bin /usr/local/bin
 COPY --from=base /app /app
 

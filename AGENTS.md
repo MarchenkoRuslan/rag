@@ -41,7 +41,11 @@ HTTP  →  routes  →  services (ingest / retrieve / generate)
 
 ## Running and testing
 
-- Create and activate `.venv`, then `pip install -e .` (single dependency list in `pyproject.toml`).
+- Create and activate `.venv`, then install as needed:
+  - API with OpenAI embeddings (default): `pip install -e .`
+  - Local embeddings (`EMBEDDING_PROVIDER=local`): add `.[local]` (sentence-transformers stack).
+  - Streamlit UI: add `.[ui]`.
+  - Contributors (tests + linters): `pip install -e ".[dev]"` (and add `.[local]` / `.[ui]` if you exercise those code paths).
 - API: `uvicorn app.main:app --reload` from repo root after install.
 - Tests: `pytest` from repo root; tests patch `DATA_DIR` / `STORAGE_DIR` — do not rely on the developer’s real `storage/` directory.
 
@@ -59,7 +63,8 @@ HTTP  →  routes  →  services (ingest / retrieve / generate)
 
 ## Quick checklist before finishing a change
 
-1. `pytest` passes.
-2. `pylint app tests ui/streamlit_app.py` passes (`pyproject.toml` configures venv `init-hook` and pragmatic disables).
-3. No new Cyrillic in code or project English docs.
-4. New settings documented in `.env.example` and `app/config.py`.
+1. `pytest` passes locally; CI runs `pytest` with `--cov=app` and `--cov-fail-under=65` (see `.github/workflows/ci.yml`).
+2. `ruff format --check app tests ui` and `ruff check app tests ui` pass.
+3. `mypy app` passes (application package only).
+4. No new Cyrillic in code or project English docs.
+5. New settings documented in `.env.example` and `app/config.py`.

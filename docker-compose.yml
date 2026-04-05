@@ -1,6 +1,9 @@
 services:
   api:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_EXTRAS: ""
     ports:
       - "${API_PORT:-8000}:8000"
     env_file: .env
@@ -17,7 +20,10 @@ services:
       start_period: 30s
 
   ui:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_EXTRAS: "ui"
     command: ["streamlit", "run", "ui/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
     ports:
       - "8501:8501"

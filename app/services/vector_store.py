@@ -6,10 +6,11 @@ import os
 import sqlite3
 import tempfile
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import faiss
 import numpy as np
@@ -35,9 +36,7 @@ def _is_idmap_index(index: faiss.Index) -> bool:
 class VectorStore:
     """Inner-product index on L2-normalized vectors (cosine similarity)."""
 
-    def __init__(
-        self, storage_dir: Path, embedding_dim: int, settings: Settings
-    ) -> None:
+    def __init__(self, storage_dir: Path, embedding_dim: int, settings: Settings) -> None:
         self._storage_dir = Path(storage_dir)
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._storage_dir / "index.faiss"
@@ -71,9 +70,7 @@ class VectorStore:
         self._conn.commit()
 
     def _meta_get(self, key: str) -> str | None:
-        row = self._conn.execute(
-            "SELECT value FROM store_meta WHERE key = ?", (key,)
-        ).fetchone()
+        row = self._conn.execute("SELECT value FROM store_meta WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else None
 
     def _meta_set(self, key: str, value: str, *, commit: bool = True) -> None:
@@ -167,9 +164,7 @@ class VectorStore:
             return self._empty_idmap_index()
         index = self._read_index_from_disk()
         if int(index.d) != self._dim:
-            raise RuntimeError(
-                f"FAISS index dimension {index.d} != expected {self._dim}"
-            )
+            raise RuntimeError(f"FAISS index dimension {index.d} != expected {self._dim}")
         if isinstance(index, faiss.IndexFlatIP):
             return self._migrate_flat_ip_to_idmap(index)
         if _is_idmap_index(index):
@@ -185,9 +180,7 @@ class VectorStore:
             return int(self._index.ntotal)
 
     def _next_faiss_ids(self, n: int) -> np.ndarray:
-        row = self._conn.execute(
-            "SELECT COALESCE(MAX(faiss_id), -1) AS m FROM chunks"
-        ).fetchone()
+        row = self._conn.execute("SELECT COALESCE(MAX(faiss_id), -1) AS m FROM chunks").fetchone()
         start = int(row["m"]) + 1
         return np.arange(start, start + n, dtype=np.int64)
 
@@ -213,10 +206,9 @@ class VectorStore:
                 if not _is_idmap_index(self._index):
                     raise RuntimeError("FAISS index is not ID-mapped")
                 self._index.add_with_ids(vectors, ids_np)
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 rows = [
-                    (int(ids_np[i]), filename, i, text, now)
-                    for i, text in enumerate(chunk_texts)
+                    (int(ids_np[i]), filename, i, text, now) for i, text in enumerate(chunk_texts)
                 ]
                 self._conn.executemany(
                     """
@@ -253,9 +245,7 @@ class VectorStore:
             ids = np.array([int(r["faiss_id"]) for r in rows], dtype=np.int64)
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
-                self._conn.execute(
-                    "DELETE FROM chunks WHERE filename = ?", (filename,)
-                )
+                self._conn.execute("DELETE FROM chunks WHERE filename = ?", (filename,))
                 if _is_idmap_index(self._index):
                     self._index.remove_ids(ids)
                 self._write_index_blob(self._index)
@@ -298,10 +288,9 @@ class VectorStore:
                 if not _is_idmap_index(self._index):
                     raise RuntimeError("FAISS index is not ID-mapped")
                 self._index.add_with_ids(vectors, ids_np)
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 rows = [
-                    (int(ids_np[i]), filename, i, text, now)
-                    for i, text in enumerate(chunk_texts)
+                    (int(ids_np[i]), filename, i, text, now) for i, text in enumerate(chunk_texts)
                 ]
                 self._conn.executemany(
                     """
@@ -346,9 +335,7 @@ class VectorStore:
             for r in rows
         }
 
-    def search(
-        self, query_vector: np.ndarray, top_k: int
-    ) -> tuple[list[int], list[float]]:
+    def search(self, query_vector: np.ndarray, top_k: int) -> tuple[list[int], list[float]]:
         """Returns (ids, scores) for inner product (cosine for normalized vectors)."""
         q = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
         faiss.normalize_L2(q)
@@ -358,7 +345,7 @@ class VectorStore:
             k = min(top_k, int(self._index.ntotal))
             scores, ids = self._index.search(q, k)
         ids_list = [int(i) for i in ids[0] if i >= 0]
-        scores_list = [float(s) for s, i in zip(scores[0], ids[0]) if i >= 0]
+        scores_list = [float(s) for s, i in zip(scores[0], ids[0], strict=True) if i >= 0]
         return ids_list, scores_list
 
     def list_documents(
@@ -384,18 +371,14 @@ class VectorStore:
             {
                 "filename": r["filename"],
                 "chunk_count": int(r["chunk_count"]),
-                "uploaded_at": str(r["first_upload"])
-                if r["first_upload"] is not None
-                else None,
+                "uploaded_at": str(r["first_upload"]) if r["first_upload"] is not None else None,
             }
             for r in rows
         ]
 
     def document_count(self) -> int:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT COUNT(DISTINCT filename) AS n FROM chunks"
-            ).fetchone()
+            row = self._conn.execute("SELECT COUNT(DISTINCT filename) AS n FROM chunks").fetchone()
         return int(row["n"]) if row else 0
 
     def close(self) -> None:

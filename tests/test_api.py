@@ -97,9 +97,7 @@ def _rag_http_bundle(tmp_path, monkeypatch):
 
 @pytest.fixture(name="rag_auth")
 def _rag_http_bundle_auth(tmp_path, monkeypatch):
-    app, store, emb = _rag_app_bundle(
-        tmp_path, monkeypatch, api_key="pytest-secret"
-    )
+    app, store, emb = _rag_app_bundle(tmp_path, monkeypatch, api_key="pytest-secret")
     try:
         with TestClient(app) as client:
             yield client, store, emb
@@ -411,9 +409,7 @@ def test_docs_protected_when_api_key_docs_exemption_disabled(tmp_path, monkeypat
 
 @patch("app.api.routes.probe_llm", return_value=(False, "timeout"))
 def test_health_llm_probe_failure(mock_probe, tmp_path, monkeypatch):
-    app, _, _ = _rag_app_bundle(
-        tmp_path, monkeypatch, health_check_llm=True
-    )
+    app, _, _ = _rag_app_bundle(tmp_path, monkeypatch, health_check_llm=True)
     try:
         with TestClient(app) as client:
             r = client.get("/health")

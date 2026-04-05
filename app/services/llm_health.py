@@ -32,7 +32,7 @@ def _probe_ollama(settings: Settings, timeout: float) -> tuple[bool, str | None]
         return False, "timeout"
     except httpx.RequestError:
         return False, "unavailable"
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return False, "unknown"
 
 
@@ -51,5 +51,5 @@ def _probe_openai(settings: Settings, timeout: float) -> tuple[bool, str | None]
         return False, "timeout"
     except httpx.RequestError:
         return False, "unavailable"
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return False, "unknown"
