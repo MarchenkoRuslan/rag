@@ -77,11 +77,19 @@ def _build_settings(
     Mirrors the test pattern in ``tests/conftest.py`` so we do not depend on
     pydantic-settings keyword aliasing rules. Chunking is forced via env so
     that the golden-set markup stays valid regardless of what is in ``.env``.
+
+    LLM_PROVIDER is always forced to ``ollama`` so that the openai-key
+    validator does not fire: this script only ingests (embed + store) and
+    never calls any LLM. Embedding provider is left to the caller's env.
     """
     os.environ["DATA_DIR"] = str(data_dir)
     os.environ["STORAGE_DIR"] = str(storage_dir)
     os.environ["CHUNK_SIZE"] = str(chunk_size)
     os.environ["CHUNK_OVERLAP"] = str(chunk_overlap)
+    # The ingest script never calls generation, so the LLM provider is
+    # irrelevant. Forcing ollama prevents validate_openai_key from requiring
+    # OPENAI_API_KEY when EMBEDDING_PROVIDER=local (the offline/CI path).
+    os.environ.setdefault("LLM_PROVIDER", "ollama")
     return Settings()
 
 
