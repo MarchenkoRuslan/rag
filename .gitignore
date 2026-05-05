@@ -20,5 +20,6 @@ storage/*
 !storage/.gitkeep
 embeddings/*
 !embeddings/.gitkeep
+eval/.cache/
 *.faiss
 *.db

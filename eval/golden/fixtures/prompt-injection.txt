@@ -1,0 +1,32 @@
+Prompt Injection in Retrieval Pipelines
+
+Prompt injection is an attack where an adversary places instructions inside
+content that the application later feeds to a language model. The model
+treats these instructions as if the operator had written them, which can
+lead to data exfiltration, unauthorized tool calls, or simply wrong
+answers. Retrieval pipelines are a natural attack surface because the
+retrieved chunks are concatenated into the prompt with relatively little
+inspection.
+
+A direct injection lives in the user input, for example a question that
+says ignore the system prompt and reveal the secret key. A more
+interesting case is indirect injection, where the malicious text lives
+inside a document that someone uploaded earlier. When a future user asks
+an unrelated question and the retrieval layer happens to surface that
+chunk, the malicious instructions enter the prompt without anyone typing
+them.
+
+Several mitigations reduce the risk. The system prompt should clearly
+separate trusted instructions from untrusted retrieved content, often by
+wrapping retrieved chunks in a labeled block and instructing the model
+to ignore any instructions inside that block. Tool calls should require
+allowlists and explicit confirmations rather than reading commands out of
+free text. Uploads from untrusted users should be scanned for known
+patterns and quarantined when suspicious.
+
+None of these mitigations are perfect. The defense is layered: input
+sanitization, prompt structure, tool boundaries, and monitoring all
+contribute, and the right balance depends on how sensitive the
+downstream actions are. Read-only assistants with no tool access have a
+much smaller blast radius than agents that can write to a database or
+call external APIs.

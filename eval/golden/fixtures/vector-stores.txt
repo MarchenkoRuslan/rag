@@ -1,0 +1,31 @@
+Comparison of Vector Stores
+
+Several vector stores compete for the same workload. FAISS is a library
+that runs in process and stores vectors in RAM with optional persistence
+to disk. It is fast and embeddable but it has no built-in network
+interface, so multi-process or multi-host deployments need an external
+wrapper. Qdrant is a standalone service with a REST and gRPC API. It
+supports payload filters, snapshots, and replication out of the box.
+PGVector is a PostgreSQL extension that stores vectors in regular tables.
+It inherits the operational story of PostgreSQL, which is attractive for
+teams that already run a managed Postgres.
+
+The right choice depends on scale, deployment, and team. For a single
+process service with a small to medium corpus, an in-process FAISS index
+is the simplest option. For a service that needs payload filters,
+horizontal scaling, or operational tooling like backups across replicas,
+a dedicated vector database is worth the added complexity. For teams that
+already operate PostgreSQL and value transactional consistency between
+vectors and structured data, PGVector is a pragmatic choice even if it
+trades some query speed at the high end.
+
+Index types matter as much as the product. A flat index is exact and
+predictable. An IVF or HNSW index trades a small amount of recall for
+much faster queries on large corpora. The decision is independent of the
+vector store: most products support several index types under the same
+API, and the right choice depends on the size of the corpus and the
+acceptable recall floor.
+
+Migration between stores is mostly a matter of re-embedding. The vectors
+themselves are portable, but identifiers, payload schemas, and index
+parameters are product-specific and need to be reconciled.

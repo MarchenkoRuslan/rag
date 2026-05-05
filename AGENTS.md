@@ -4,7 +4,7 @@ Use this file as the primary project contract for automated assistants (Cursor, 
 
 ## Language policy
 
-- **All source code** (Python, config strings shown to users, log message keys where they are English today, Streamlit UI copy, tests): **English only**. No Cyrillic in `*.py`, `*.md` under `app/`, `tests/`, `ui/`, or in `.env.example` values meant for operators.
+- **All source code** (Python, config strings shown to users, log message keys where they are English today, Streamlit UI copy, tests): **English only**. No Cyrillic in `*.py`, `*.md` under `app/`, `tests/`, `ui/`, `eval/`, or in `.env.example` values meant for operators. Golden-set fixtures and `questions.jsonl` are part of the testable surface and follow the same rule.
 - **User-facing docs** in the repo root (`README.md`, this file): **English** for consistency with the codebase.
 
 ## Stack
@@ -14,6 +14,7 @@ Use this file as the primary project contract for automated assistants (Cursor, 
 - **Services**: `ingestion`, `retrieval`, `generation`, `embeddings`; **storage** is `app/services/vector_store.py` (FAISS + SQLite).
 - **UI**: `ui/streamlit_app.py` calls the HTTP API (`RAG_API_URL`).
 - **Config**: `app/config.py` + `.env` / `.env.example` via `pydantic-settings`.
+- **Evaluation**: `eval/` contains golden set assets (questions, fixtures, rubric) and the `ingest_fixtures.py` CLI. No code under `app/` depends on `eval/`. See `eval/README.md`.
 
 ## Architecture (current)
 
@@ -64,7 +65,8 @@ HTTP  →  routes  →  services (ingest / retrieve / generate)
 ## Quick checklist before finishing a change
 
 1. `pytest` passes locally; CI runs `pytest` with `--cov=app` and `--cov-fail-under=65` (see `.github/workflows/ci.yml`).
-2. `ruff format --check app tests ui` and `ruff check app tests ui` pass.
+2. `ruff format --check app tests ui eval/scripts` and `ruff check app tests ui eval/scripts` pass.
 3. `mypy app` passes (application package only).
-4. No new Cyrillic in code or project English docs.
+4. No new Cyrillic in code, `eval/` artifacts, or project English docs.
 5. New settings documented in `.env.example` and `app/config.py`.
+6. If you change `CHUNK_SIZE` / `CHUNK_OVERLAP` defaults in `app/config.py`, regenerate `relevant_chunks` in `eval/golden/questions.jsonl` and update `GOLDEN_CHUNK_SIZE` / `GOLDEN_CHUNK_OVERLAP` in `eval/scripts/ingest_fixtures.py` and `tests/test_golden_set.py`. Otherwise the schema test will start failing.

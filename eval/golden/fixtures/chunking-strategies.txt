@@ -1,0 +1,29 @@
+Chunking Strategies for RAG
+
+Chunking is the process of splitting a document into smaller pieces before
+embedding. Each chunk becomes one vector in the index, so the chunk size
+directly controls retrieval granularity. Chunks that are too small lose
+context and force the model to stitch fragments together. Chunks that are too
+large dilute the embedding because a single vector now represents many topics
+at once.
+
+A practical default is paragraph-aware chunking. The text is first split on
+blank lines into paragraphs. Paragraphs are then concatenated into a buffer
+until the buffer reaches a target size, at which point the buffer is emitted
+as one chunk. This keeps natural boundaries and avoids cutting sentences in
+half whenever possible.
+
+Long paragraphs that exceed the target size on their own are handled with a
+sliding window. The window walks over the paragraph in steps equal to the
+target size minus the overlap, and each step emits one chunk. The window
+prefers to break on a newline near the end of the chunk so that sentences are
+not cut mid-word.
+
+Two configuration values govern the behavior. The chunk size sets the
+maximum number of characters per chunk. The chunk overlap sets how many
+characters from the end of one chunk are repeated at the start of the next.
+The overlap exists so that a fact that straddles a chunk boundary still
+appears intact in at least one chunk. The overlap must be strictly less than
+the chunk size, otherwise progress between windows would be zero or negative.
+A typical starting point is a chunk size of 500 characters with an overlap of
+50 characters.

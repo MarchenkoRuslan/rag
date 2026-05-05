@@ -1,5 +1,7 @@
 # RAG Knowledge System
 
+![RAG Knowledge System overview](slide.png)
+
 Production-oriented RAG stack: FastAPI, FAISS + SQLite, OpenAI or local embeddings (sentence-transformers), OpenAI or Ollama for the LLM, and a minimal Streamlit UI.
 
 ## Requirements
@@ -79,8 +81,8 @@ Install dev tools: `pip install -e ".[dev]"`.
 
 ```bash
 pytest
-ruff format --check app tests ui
-ruff check app tests ui
+ruff format --check app tests ui eval/scripts
+ruff check app tests ui eval/scripts
 mypy app
 ```
 
@@ -90,6 +92,21 @@ Local `pytest` does not enable coverage by default. CI runs `pytest` with `--cov
 pytest --cov=app --cov-report=term-missing --cov-fail-under=65
 ```
 
+## Evaluation
+
+The repo ships a minimal **golden set** under [`eval/`](eval/) that fixes what we mean by a "good answer":
+
+- **Retrieval quality** — Precision@k / Recall@k / NDCG@k against `relevant_files` and `relevant_chunks` in [`eval/golden/questions.jsonl`](eval/golden/questions.jsonl).
+- **Generation quality** — a four-axis rubric (groundedness, answer relevance, citations, refusal correctness) in [`eval/golden/rubric.md`](eval/golden/rubric.md).
+
+Reproducible corpus + ingest CLI (writes to `eval/.cache/`, never touches the live `storage/`):
+
+```bash
+python eval/scripts/ingest_fixtures.py --clear --print-chunk-map
+```
+
+Metric computation and optional LLM-as-judge automation build on top of these artifacts. Schema is enforced by `tests/test_golden_set.py`. See [eval/README.md](eval/README.md) for the full workflow and the rationale behind the hybrid (doc-level + chunk-level) markup.
+
 ## Layout
 
 - `pyproject.toml` — dependencies, extras (`local`, `ui`, `dev`), ruff/mypy/pytest config
@@ -98,6 +115,7 @@ pytest --cov=app --cov-report=term-missing --cov-fail-under=65
 - `storage/` — FAISS index and SQLite chunk metadata
 - `embeddings/` — optional model cache (`HF_HOME=embeddings` in `.env`)
 - `ui/streamlit_app.py` — chat, upload, and document removal
+- `eval/` — golden set assets (12 labeled questions, fixture corpus, generation rubric, ingest CLI). See [eval/README.md](eval/README.md).
 
 ## Endpoints
 
