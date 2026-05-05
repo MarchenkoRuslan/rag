@@ -1,0 +1,28 @@
+Embeddings and FAISS Similarity Search
+
+Text embeddings map a piece of text to a fixed-length numeric vector. Two
+texts that mean similar things end up close together in that vector space,
+while unrelated texts end up far apart. The closeness is usually measured
+with cosine similarity, which compares the angle between two vectors and
+ignores their magnitude.
+
+FAISS is a library from Facebook AI Research for fast similarity search over
+dense vectors. It does not compute cosine similarity directly. Instead, FAISS
+exposes an inner product index. To recover cosine similarity, the application
+must L2-normalize each vector before insertion and before query. After
+normalization the inner product between two vectors equals their cosine
+similarity, so an inner product index acts like a cosine index.
+
+A flat inner product index stores every vector in memory and scans them all
+at query time. This is exact but slow on very large corpora. FAISS also
+provides approximate indexes such as IVF and HNSW that trade a small amount
+of recall for much faster queries. For small to medium corpora, the flat
+index is a reasonable default because it is exact and easy to reason about.
+
+Two practical pitfalls show up often. First, the embedding dimension stored
+in the index must match the dimension produced by the active embedding model.
+Mixing a 1536-dimensional model with a 384-dimensional index raises an error
+on insertion. Second, the index file format on disk is sensitive to library
+version and to operating system path encoding. Saving the index as a byte
+buffer and writing it through the standard filesystem APIs avoids the
+non-ASCII path bugs that show up on Windows.

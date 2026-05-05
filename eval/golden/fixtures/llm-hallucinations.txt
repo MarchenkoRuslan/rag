@@ -1,0 +1,32 @@
+Hallucinations in Large Language Models
+
+A hallucination is a confident statement from a language model that is not
+supported by any source the model was given. The output looks fluent and
+plausible but the underlying fact is wrong, fabricated, or attributed to a
+source that does not exist. Hallucinations are dangerous because the
+fluency hides the error from a casual reader.
+
+The root cause is that a language model is trained to produce likely
+continuations of text, not to verify facts. When the prompt does not
+contain enough evidence to answer the question, the model still produces
+the most likely sounding answer. Without grounding, the most likely answer
+is sometimes correct and sometimes invented.
+
+Retrieval-augmented generation reduces hallucinations by changing the
+prompt. Instead of asking the model to answer from memory, the system
+supplies retrieved chunks as the only allowed evidence and instructs the
+model to refuse when the evidence does not cover the question. This shifts
+the failure mode from a fluent invention to an explicit refusal, which is
+much easier to detect.
+
+Three additional techniques help. First, requiring the model to cite
+sources by number forces every claim to be traceable. Second, lowering
+temperature reduces the chance of unusual continuations that drift from
+the evidence. Third, evaluating answers against a labeled set with a
+groundedness rubric catches regressions before they reach users.
+
+Hallucinations are not eliminated by RAG alone. If retrieval returns a
+chunk that is wrong or off-topic, the model can still produce a confident
+answer based on that chunk. This is why retrieval quality and generation
+quality must be measured separately. A correct generation on top of bad
+retrieval is still a wrong answer.

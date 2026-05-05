@@ -1,0 +1,28 @@
+Retrieval-Augmented Generation Overview
+
+Retrieval-Augmented Generation, abbreviated as RAG, is a design pattern that
+combines a search component with a large language model. Instead of relying on
+the model's internal weights to recall facts, the system first retrieves a
+small set of relevant text fragments from an external corpus and then asks the
+language model to answer the user's question using those fragments as context.
+
+The motivation is straightforward. Language models trained on a fixed snapshot
+of the web cannot reflect private documents and they cannot reflect changes
+that happened after the training cutoff. RAG sidesteps both limitations: the
+external corpus can hold private knowledge, and it can be updated independently
+of the model. This makes RAG a popular choice for enterprise assistants, help
+desks, and developer documentation chat interfaces.
+
+A typical RAG pipeline has three stages. Ingestion converts source documents
+into chunks, embeds the chunks, and stores the vectors together with the raw
+text. Retrieval embeds the user question with the same model, searches the
+vector store for the top results, and returns the matching chunks. Generation
+passes the chunks to the language model with a prompt that instructs the model
+to answer using only the supplied context and to cite the sources by number.
+
+RAG is useful because it shifts a class of factual errors from the language
+model to the retrieval layer. When a fact is missing from the retrieved
+context, a well prompted model can refuse rather than invent an answer. When a
+fact is wrong in the corpus, the system surfaces a citation so the operator
+can correct the source. Both behaviors are easier to debug than a hallucinated
+answer that has no traceable origin.

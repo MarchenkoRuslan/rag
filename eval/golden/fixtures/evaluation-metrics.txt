@@ -1,0 +1,32 @@
+Evaluation Metrics for Retrieval
+
+Retrieval quality is measured against a labeled set of questions. For each
+question, a human annotator marks which documents or chunks are relevant.
+The retrieval system is then asked the same questions, and its top results
+are compared to the labels.
+
+Precision at k counts how many of the first k retrieved items are relevant
+and divides that count by k. It answers the question of how clean the top
+results are. A precision at 5 of 0.6 means three of the first five results
+are relevant. Precision at k punishes systems that pad the top of the list
+with off-topic items.
+
+Recall at k counts how many of the truly relevant items appeared somewhere
+in the first k results and divides that count by the total number of
+relevant items for the question. It answers the question of how complete
+the retrieval is. Recall at k is the right metric when missing a relevant
+document is more painful than seeing an irrelevant one.
+
+Normalized discounted cumulative gain at k, written NDCG at k, also
+considers the position of each relevant item. A relevant item near the top
+of the list contributes more than the same item further down. NDCG at k
+divides the discounted gain of the actual ranking by the discounted gain
+of the perfect ranking, which produces a value between zero and one. NDCG
+is useful when the order inside the top k matters, which is common when a
+language model only reads the first few chunks and ignores the rest.
+
+These three metrics are complementary. A system can have high precision
+and low recall when it returns a tiny but accurate top-k. A system can
+have high recall and low precision when k is large and the list is padded.
+Reporting all three avoids the trap of optimizing one number at the
+expense of the others.
